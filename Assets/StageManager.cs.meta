@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 5c76c27aaca59234891b0e072efa3c6c
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - stagePrefab: {fileID: 3185807483912747498, guid: a24e14864daf527498800ad643150854, type: 3}
+  - obstaclePrefab: {fileID: 7930625936687995447, guid: 91a22f58f5d516a43a5dbbcb7cc51472, type: 3}
+  - player: {instanceID: 0}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

@@ -1,0 +1,17 @@
+{
+    "notes": [
+        {"spawnZ": 20.0, "lane": 0, "type": "Item"},
+        {"spawnZ": 30.0, "lane": -1, "type": "Item"},
+        {"spawnZ": 40.0, "lane": 1, "type": "Item"},
+        {"spawnZ": 60.0, "lane": 0, "type": "Obstacle"},
+        {"spawnZ": 80.0, "lane": -2, "type": "Item"},
+        {"spawnZ": 80.0, "lane": 2, "type": "Item"},
+        {"spawnZ": 100.0, "lane": 0, "type": "JumpObstacle"},
+        {"spawnZ": 120.0, "lane": -1, "type": "Item"},
+        {"spawnZ": 120.0, "lane": 0, "type": "Item"},
+        {"spawnZ": 120.0, "lane": 1, "type": "Item"},
+        {"spawnZ": 150.0, "lane": 0, "type": "Obstacle"},
+        {"spawnZ": 150.0, "lane": -1, "type": "Obstacle"},
+        {"spawnZ": 170.0, "lane": 0, "type": "JumpObstacle"}
+    ]
+}
