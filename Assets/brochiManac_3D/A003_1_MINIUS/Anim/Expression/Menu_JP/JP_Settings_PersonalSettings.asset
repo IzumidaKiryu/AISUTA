@@ -1,0 +1,55 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: -340790334, guid: 67cc4cb7839cd3741b63733d5adf0442, type: 3}
+  m_Name: JP_Settings_PersonalSettings
+  m_EditorClassIdentifier: 
+  controls:
+  - name: "\u30B3\u30F3\u30C8\u30ED\u30FC\u30E9\u30FC"
+    icon: {fileID: 2800000, guid: 33e2a60bc4842e74996f5563478bfa68, type: 3}
+    type: 103
+    parameter:
+      name: 
+    value: 1
+    style: 0
+    subMenu: {fileID: 11400000, guid: be3249441d1326c459660ee68029b050, type: 2}
+    subParameters: []
+    labels: []
+  - name: "\u8868\u60C5\u6307\u5B9A\u30BF\u30A4\u30D7"
+    icon: {fileID: 2800000, guid: 740447b60b0f1c946b145b89d2f6054d, type: 3}
+    type: 103
+    parameter:
+      name: 
+    value: 1
+    style: 0
+    subMenu: {fileID: 11400000, guid: ac1a46195a0f28e42b62824271a5ab7c, type: 2}
+    subParameters: []
+    labels: []
+  - name: "\u8868\u60C5\u4E0A\u66F8\u304D\u6709\u52B9"
+    icon: {fileID: 2800000, guid: 740447b60b0f1c946b145b89d2f6054d, type: 3}
+    type: 102
+    parameter:
+      name: SYNC_CN_EMOTE_OVERRIDE_ENABLE
+    value: 1
+    style: 0
+    subMenu: {fileID: 0}
+    subParameters: []
+    labels: []
+  - name: "AFK\u5FA9\u5E30\u6642\u79FB\u52D5\u6709\u52B9"
+    icon: {fileID: 2800000, guid: 44b822c693fbd174d8f994ee312dd8e4, type: 3}
+    type: 102
+    parameter:
+      name: SYNC_CN_AFK_LOCOMOTION_ENABLE
+    value: 1
+    style: 0
+    subMenu: {fileID: 0}
+    subParameters: []
+    labels: []
