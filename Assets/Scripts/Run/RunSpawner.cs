@@ -154,7 +154,7 @@ namespace Yakiniku.Run
 
         private GameObject CreateInstance(GameObject prefab, string key)
         {
-            var instance = Instantiate(prefab, transform);
+            var instance = Instantiate(prefab, transform,true);
 
             var note = instance.GetComponent<SpawnedNote>();
             if (note == null) note = instance.AddComponent<SpawnedNote>();
@@ -179,7 +179,7 @@ namespace Yakiniku.Run
             var instance = pool.Get();
             instance.transform.SetPositionAndRotation(
                 new Vector3(settings.LaneToX(lane), entry.spawnY, data.spawnZ),
-                Quaternion.identity);
+                entry.prefab.transform.rotation);
 
             var note = instance.GetComponent<SpawnedNote>();
             note.MarkSpawned();
