@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e4b4a6c4845632d4b97a9aa3a9b12de1, type: 3}
+  m_Name: RunSettings
+  m_EditorClassIdentifier: Assembly-CSharp::Yakiniku.Run.RunSettings
+  laneCount: 5
+  laneWidth: 2
+  forwardSpeed: 10
+  laneChangeSpeed: 18
+  jumpHeight: 1.6
+  gravity: -25
+  groundY: 0.35
+  maxHealth: 3
+  invincibleTime: 1.5

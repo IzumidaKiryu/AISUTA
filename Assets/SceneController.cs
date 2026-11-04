@@ -24,7 +24,7 @@ public class SceneController : MonoBehaviour
         GameData.selectedJsonName = jsonFileName;
 
         // "Game"シーンをロードする
-        SceneManager.LoadScene("Game");
+        SceneManager.LoadScene("Game_Run");  // 旧"Game"は戸せるように残してある
     }
 
     // リザルト画面へ遷移する関数

@@ -68,6 +68,12 @@ namespace Yakiniku.Run
         /// <summary>まだ生成されていないノーツが残っているか（＝ステージがまだ続くか）</summary>
         public bool HasRemainingNotes => cursor < notes.Count;
 
+        /// <summary>譜面を読み終わったか。ゴール判定は読み込み前に走らせてはいけない。</summary>
+        public bool IsReady { get; private set; }
+
+        /// <summary>譜面の最後のノーツのZ座標。ここを通過したらステージの終わり。</summary>
+        public float LastNoteZ { get; private set; }
+
         private void Awake()
         {
             if (settings == null)
@@ -90,6 +96,9 @@ namespace Yakiniku.Run
             // 先読み判定のため、必ずZ座標の昇順に並べておく
             notes.Sort((a, b) => a.spawnZ.CompareTo(b.spawnZ));
             cursor = 0;
+
+            LastNoteZ = notes.Count > 0 ? notes[notes.Count - 1].spawnZ : 0f;
+            IsReady = true;
         }
 
         private void BuildPools()
