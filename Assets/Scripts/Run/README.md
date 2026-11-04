@@ -187,6 +187,13 @@ BGM は `BGM` オブジェクトの `AudioSource` が持ち、`GoalWatcher` が�
 見た目のプレハブ（`Assets/Particle System.prefab`）は**書き換えていない**。
 子として抱えて、並べ方だけ上書きしている。
 
+### Bloom が無いと光らない
+
+`Game_Run` には `Global Volume`（プロファイルは `Global Volume Profile 1`、Bloom の
+threshold 0.2 / intensity 2）を置き、**カメラの `Render Post Processing` をONにしてある**。
+Volume を置いてもカメラ側がOFFだと Bloom は一切効かず、ペンライトは
+ただの明るいベタ塗り＝白い棒になる。どちらか片方でも欠けると白くなるので注意。
+
 ### 発光について
 
 元の `PenlightMat` は `_EmissionColor` が 0.749 で、Bloom の threshold 0.9 に届かないため
@@ -196,16 +203,28 @@ BGM は `BGM` オブジェクトの `AudioSource` が持ち、`GoalWatcher` が�
 `Game_Run` では複製した `Settings_Run/PenlightMat_Run.mat` を使い、
 
 - マテリアルの一律な灰色加算を切る（全体に乗って立体感を消していた）
-- 代わりに**粒ごとのHDRカラー**で光らせる（ピンク寄り〜水色寄りを randomBetweenTwoColors、強度2〜3）
+- 代わりに**粒ごとの色**で光らせる
 
 としてある。色を変えたい場合は `Run_PenlightStrip.prefab` の
-ParticleSystem → Start Color を触る。**1.0 を超える値にしないと光らない。**
+ParticleSystem → Start Color を触る。
+
+**2色のランダム補間（Random Between Two Colors）にしてはいけない。**
+2色の「間」をランダムに取る挙動なので、ピンクと水色のような補色に近い
+組み合わせだと中間がほぼ白になり、大半のペンライトが白くなる。
+Gradient を **Fixed（段階）** にして **Random Color** で引けば、各粒は必ず
+指定した色のどれかになり彩度が残る。現在はピンク／水色／黄緑／橙／紫の5色。
 
 既存 `PenlightMat` は旧 Game シーンでも使われているため、あえて書き換えていない。
 
 ## HUD（仮）
 
-`Canvas/HUD` 配下は**全て仮の見た目**。差し替えるときは `HUD` ごと作り直してよい。
+`Canvas/HUD` 配下は**全て仮の見た目**。
+
+**UIに日本語は出せない。** TMPの既定フォント `LiberationSans SDF` に日本語グリフが
+無いため、日本語を入れると豆腐(□)になる。日本語を出したい場合は日本語フォントから
+TMP Font Asset を作って差し替えること。既存のスコア・HP表示が読めているのは
+全てASCIIだから。
+差し替えるときは `HUD` ごと作り直してよい。
 ゲームロジックが知っているのは次の参照だけなので、これを繋ぎ直せば見た目は自由。
 
 | 繋ぎ先 | 必要なもの |
