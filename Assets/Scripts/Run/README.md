@@ -38,147 +38,222 @@
 | `BeatGaugeController.cs` | ルールを実行してゲージを増減させる。フィーバー管理 |
 | `BeatGaugeView.cs` | Slider への表示 |
 | `RunGameBridge.cs` | 既存 `GameManager` への繋ぎ役（スコア・HP表示） |
+| `RunGoalWatcher.cs` | ステージ終了の判定とリザルトへの遷移。**譜面基準／曲基準を切替** |
+| `PenlightStrip.cs` | 床タイルの脇に並ぶペンライト1列。タイルが回されたら撒き直す |
+| `Editor/RunSceneBuilder.cs` | シーン・設定アセット・プレハブの自動生成 |
+| `Editor/RunSmokeTest.cs` | 自動プレイで動作確認チェックリストを検証 |
+| `Editor/PlayFromTitle.cs` | どのシーンを開いていてもPlayでタイトルから始める |
 
 ---
 
 # 動作確認用シーンの作り方
 
-まずは**既存シーンを触らず、新しい空シーンでグレーボックス（白い箱だけ）で動かす**。
-見た目を後回しにすると、どこが壊れているか切り分けやすい。
+**手作業は不要。** Unityのメニューから
 
-所要時間は15分くらい。上から順にやれば動く。
+```
+Yakiniku > Run > Game_Run シーンを生成
+```
 
-## 前提の確認
+を実行すると、`Assets/Scenes/Game_Run.unity` が設定済みの状態で生成される。
+中身は `Assets/Scripts/Run/Editor/RunSceneBuilder.cs` にコードとして書いてあるので、
+シーンを壊してしまっても同じメニューを押せば作り直せる（何度実行してもよい）。
 
-始める前に、Project ウィンドウに **`Assets/Scripts/Run/` が存在すること**を確認する。
-無ければこのブランチの内容がまだ自分の作業コピーに入っていないので、
-先に `git pull` なりマージなりで取り込むこと。取り込めていないと
-`Create > Yakiniku > ...` メニューも `Player Runner` コンポーネントも出てこない。
+コマンドラインから実行する場合（Unityを閉じた状態で）:
 
-なお `Create > Yakiniku > Run > Run Settings` は**右クリックメニューを辿る順番**であって、
-`Yakiniku` というフォルダを作るという意味ではないので注意。
+```
+Unity.exe -batchmode -quit -projectPath <プロジェクトのパス> -executeMethod Yakiniku.Run.EditorTools.RunSceneBuilder.BuildAll
+```
 
-## 0. シーンを作る
+## 生成されるもの
 
-1. `File > New Scene` → `Basic (URP)` を選んで `Create`
-2. `Ctrl+S` で `Assets/Scenes/Game_Run.unity` として保存
+| パス | 中身 |
+| --- | --- |
+| `Assets/Settings_Run/RunSettings.asset` | レーン・速度・ジャンプの数値設定 |
+| `Assets/Settings_Run/GaugeSettings.asset` | ゲージの増減ルール |
+| `Assets/Prefabs/Run/Run_Item.prefab` | 既存 `Item.prefab` + 当たり判定 + `BeatItem` |
+| `Assets/Prefabs/Run/Run_Obstacle.prefab` | 既存 `Obstacle.prefab` + 当たり判定 + `Obstacle` |
+| `Assets/Prefabs/Run/Run_JumpObstacle.prefab` | 既存 `JumpObstacle.prefab` + 当たり判定 + `Obstacle` |
+| `Assets/Scenes/Game_Run.unity` | 下記のHierarchyが組まれたシーン |
 
-## 1. 設定アセットを2つ作る
+```
+Game_Run
+├ Main Camera        … CameraController (Player追従)
+├ Directional Light
+├ Player             … BoxCollider + Rigidbody + PlayerRunner
+│   └ PlayerModel    … 既存の Assets/Player/PlayerModel.prefab
+├ InputSource        … KeyboardRunInput（矢印 / WASD / Space）
+├ Ground             … GroundTiler（既存 Stage_Fixed.prefab を敷き続ける）
+├ Spawner            … JsonNoteProvider + RunSpawner
+├ GaugeController    … BeatGaugeController
+├ Canvas
+│   └ BeatGaugeSlider … Slider + BeatGaugeView
+└ EventSystem
+```
 
-1. Project ウィンドウで `Assets` を右クリック → `Create > Folder` → 名前を `Settings_Run` にする
-2. `Settings_Run` を開いた状態で右クリック → メニューを `Create` → `Yakiniku` → `Run` → `Run Settings`
-   と辿る（フォルダを作るのではなく、メニューの階層をたどる）→ 名前は `RunSettings`
-3. 同じ場所で右クリック → `Create` → `Yakiniku` → `Run` → `Gauge Settings` → 名前は `GaugeSettings`
+生成したら **シーンを開いて Play を押すだけ**で動く。
 
-`Create` メニューに `Yakiniku` が出てこない場合は、スクリプトが取り込めていないか
-コンパイルが通っていない。Console にエラーが出ていないか確認する。
+## 見た目のアセットは変更していない
 
-`RunSettings` は初期値のままでよい（`laneCount = 5`、`laneWidth = 2`、`forwardSpeed = 10`、`groundY = 1`）。
+`Item` / `Obstacle` / `JumpObstacle` / `PlayerModel` / `Stage_Fixed` は他メンバーの担当なので、
+**ファイルは一切書き換えていない**。ランゲーム用のプレハブは、それらを子として抱え込み、
+当たり判定とゲームロジックを親側に持たせる構造にしてある。
 
-## 2. 床
+```
+Run_Obstacle (親・自分の担当)
+├ CapsuleCollider (isTrigger)  ← ゲーム上の当たり判定はこれだけ
+├ Obstacle (スクリプト)
+└ Obstacle (子・既存アセット)   ← 見た目専用。元のColliderは無効化してある
+```
 
-1. Hierarchy で右クリック → `3D Object > Plane` → 名前を `GroundTile` に変更
-2. Inspector の Transform を設定
-   - Position `(0, 0, 0)`
-   - Scale `(2, 1, 5)` … Plane は Scale 1 で 10m 四方なので、これで **幅20m × 奥行50m** になる
-3. Project ウィンドウに `Prefabs` フォルダを作り、`GroundTile` をドラッグしてプレハブ化
-4. Hierarchy から `GroundTile` を削除（プレハブ化した実体はもう不要）
-5. Hierarchy で右クリック → `Create Empty` → 名前を `Ground` に変更
-6. `Ground` に `Add Component` → `Ground Tiler` を追加して設定
-   - `Ground Prefab` … 作った `GroundTile` プレハブ
-   - `Tile Length` … **50**（Scale Z=5 × 10m。ここがプレハブの実寸と違うと床が途切れる）
-   - `Pivot At Center` … **チェックを入れる**（Unity の Plane は原点が中心にあるため）
-   - `Ground Y` … 0
-   - `Player` は後で割り当てる
+こうしている理由は2つ。
 
-## 3. プレイヤー
+1. **モデルを差し替えても当たり判定が壊れない。** スケールを変えても親のColliderは変わらない。
+2. **既存 `Obstacle.prefab` のColliderが実寸と合っていない。** モデルを100倍スケールで
+   使っているため、付いている CapsuleCollider が半径50m・高さ200mになっており、
+   そのまま使うとスタート直後に被弾する。元ファイルを直さずに回避したかった。
 
-1. Hierarchy で右クリック → `3D Object > Capsule` → 名前を `Player` に変更
-   - Capsule は高さ2mで原点が中心なので、Position `(0, 1, 0)` で床にちょうど立つ
-2. `Add Component` → `Rigidbody`（設定はスクリプトが起動時に自動で整えるので触らなくてよい）
-3. `Add Component` → `Player Runner`
-   - `Settings` … `RunSettings` をドラッグ
-   - `Input Source` は次の手順で割り当てる
-4. Capsule Collider は最初から付いている。**`Is Trigger` はオフのまま**にする
+見た目の大きさや向きがおかしい場合は、`Run_*.prefab` の**子**のTransformを調整すればよい。
+当たり判定（親のCollider）は触らなくてよい。
 
-これで `Ground` の `Player` 欄に `Player` をドラッグしておく。
+## 寸法の決めごと
 
-## 4. 入力
+数値は `RunSceneBuilder.cs` の先頭にまとめてある。
 
-1. Hierarchy で右クリック → `Create Empty` → 名前を `InputSource` に変更
-2. `Add Component` → `Keyboard Run Input`
-3. `Player` の `Player Runner` の `Input Source` 欄に、`InputSource` をドラッグ
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| 床の上面 | `y = 0` | `Stage_Fixed` の床は厚さ1mで原点が中心なので、原点を `-0.5` に置く |
+| `RunSettings.groundY` | `0.35` | プレイヤーの基準点。モデルの原点(足元)が床の上面に来る高さ |
+| プレイヤーの当たり判定 | 0.8 × 1.6 × 0.8 の箱 | モデルの胴体ぶん。`isTrigger` はオフ |
+| `Item` の生成Y | `1.0` | 半径0.7の球判定。レーン幅2mなので隣のレーンには届かない |
+| `Obstacle` の生成Y | `1.0` | 高さ2mのカプセル判定。ジャンプでは越えられない＝横に避ける |
+| `JumpObstacle` の生成Y | `0.5` | 判定の高さを0.8mに抑えてある（見た目は1m）ので、ジャンプで越えられる |
 
-**ここまでで一度 Play してみる。** 前に走り出して、矢印キー / A・D でレーン移動、
-↑ / W / Space でジャンプできれば土台は完成。
+`JumpObstacle` を越えられる根拠: `jumpHeight 1.6` / `gravity -25` だと滞空0.72秒で、
+判定の上(0.8m)より高い位置にいる時間が約0.5秒。前進10m/sで壁の判定を通過するのに
+必要な時間は約0.18秒なので、タイミングが多少ずれても越えられる。
+`jumpHeight` を下げるとここが詰まるので注意。
 
-## 5. 障害物とアイテムのプレハブ
+---
 
-3つ作る。いずれも作ったら `Prefabs` フォルダにドラッグしてプレハブ化し、Hierarchy からは削除する。
+---
 
-| 名前 | 元 | Scale | 付けるコンポーネント |
-| --- | --- | --- | --- |
-| `Obstacle_Block` | `3D Object > Cube` | `(1.5, 1.5, 1)` | `Obstacle` |
-| `Obstacle_Jump` | `3D Object > Cube` | `(12, 0.8, 1)` | `Obstacle` |
-| `Item_Beat` | `3D Object > Sphere` | `(0.8, 0.8, 0.8)` | `BeatItem` |
+# 本番シーンは Game_Run
 
-`Obstacle_Jump` は全レーンを塞ぐ低い壁。ジャンプで飛び越える想定。
+`SceneController.StartGame()` は `Game_Run` を読む。旧 `Game` シーンは消さずに残してあるので、
+戻したい場合は `SceneController.cs` の1行を `"Game"` に書き換えればよい。
 
-Collider の `Is Trigger` はコンポーネントを付けた時点で自動的にオンになる。
-（もしオフだったら手動でオンにする。ここがオフだと当たり判定が飛ばない）
+## 旧 Game シーンに残っている問題（Game_Run では解消済み）
 
-## 6. 障害物の生成
+旧シーンを使い続ける場合は、以下が未修正であることに注意する。
 
-1. Hierarchy で右クリック → `Create Empty` → 名前を `Spawner` に変更
-2. `Add Component` → `Json Note Provider`
-   - `Resources File Name` … `StageData_Normal`
-   - `Use Selected Difficulty` … チェックを入れたままでよい（難易度選択から来た場合はそちらが優先される）
-3. `Add Component` → `Run Spawner`
-   - `Settings` … `RunSettings`
-   - `Player` … `Player`
-   - `Note Provider` … 空のままでよい（同じ GameObject から自動で探す）
-   - `Note Prefabs` の `Size` に **3** を入れて、以下のように設定する
+| 症状 | 原因 |
+| --- | --- |
+| 障害物が倒れてスポーンする | `StageManager` が `Quaternion.identity` で生成し、`Obstacle.prefab` の -90°(X) 補正回転を捨てている |
+| 開始1秒で見えないままHPが減る | `Obstacle.prefab` を100倍スケールで使っているため、CapsuleCollider が**半径50m・高さ200m**になっている |
+| ジャンプ障害物に当たると体力が残っていても止まる | 上記で開始時に体力を2つ失っているため、壁でHPが0になる。前進を止めているのはHP0のみ |
+| レーン±2のアイテムが取れない | `StageManager.laneDistance = 2.5` と `PlayerController.laneDistance = 2` が不一致 |
 
-| 要素 | Type | Prefab | Spawn Y | Force Center Lane |
-| --- | --- | --- | --- | --- |
-| Element 0 | `Item` | `Item_Beat` | 1 | オフ |
-| Element 1 | `Obstacle` | `Obstacle_Block` | 0.75 | オフ |
-| Element 2 | `JumpObstacle` | `Obstacle_Jump` | 0.4 | **オン** |
+`Game_Run` では当たり判定をスケール1の親に持たせ、レーン↔X変換を
+`RunSettings.LaneToX()` の1箇所に集約しているので、これらは構造的に起きない。
 
-`Type` の文字列は譜面JSONの `type` と**完全一致**させる（大文字小文字も区別される）。
-`Spawn Y` は床に接地して見える高さ（プレハブの高さの半分）。
+## ゴール判定
 
-## 7. ゲージ
+`RunGoalWatcher` が持つ。`condition` で基準を切り替える。
 
-1. Hierarchy で右クリック → `Create Empty` → 名前を `GaugeController` に変更
-2. `Add Component` → `Beat Gauge Controller`
-   - `Settings` … `GaugeSettings`
-   - `Player` … `Player`
-3. Hierarchy で右クリック → `UI > Slider`（Canvas と EventSystem が自動で作られる）
-4. 作られた `Slider` を選び、`Add Component` → `Beat Gauge View`
-   - `Controller` … `GaugeController`
-   - `Slider` … `Slider` 自身をドラッグ
-   - `Fill Image` … Hierarchy の `Slider > Fill Area > Fill` をドラッグ
-5. Slider の見た目を整える（任意）
-   - `Slider > Handle Slide Area` は不要なのでチェックを外して非表示にする
-   - Rect Transform で画面上部などに配置する
+| 値 | 判定 | 使う場面 |
+| --- | --- | --- |
+| `ChartEnd`（現在） | 譜面の最後のノーツから `goalMarginZ`(15m) 先まで走ったら終了 | **曲の制作中。** 曲121秒に対し譜面17秒なので、曲基準だと100秒以上空の床を走ることになる |
+| `BgmLength` | BGMが鳴り終わったら終了 | **曲と譜面が揃ったらこちらに戻す** |
 
-## 8. カメラ
+切り替えは `Game_Run` の `GoalWatcher` の Inspector で `Condition` を変えるだけ。
 
-1. Hierarchy の `Main Camera` を選ぶ
-2. Transform を Position `(0, 6, -9)`、Rotation `(20, 0, 0)` にする
-3. `Add Component` → `Camera Controller`（既存スクリプト）
-   - `Player` … `Player` をドラッグ
+なお `GameManager` も曲の長さでクリア判定を持っているが、二重に発火しないよう
+`Game_Run` では `GameManager.bgmSource` を**意図的に空**にしてある。
+BGM は `BGM` オブジェクトの `AudioSource` が持ち、`GoalWatcher` がそれを見る。
+`GameManager.bgmSource` に割り当て直すと終了判定が二重になるので注意。
 
-## 9. 既存UIとの接続（任意）
+## 床の両サイドのペンライト
 
-既存の `GameManager` を置いたシーンなら、`Create Empty` に `Run Game Bridge` を付けて
-`Player` を割り当てると、スコア・HP のテキスト表示が動く。
-`GameManager` が無いシーンでは付けなくてよい（付けても何も起きないだけでエラーにはならない）。
+`GroundTiler` の `Side Props` に `Run_PenlightStrip.prefab` を入れてあり、
+**床タイル1枚につき左右へ1列ずつ、タイルの子として生成**される。
+床と同じ仕組みで前方へ回るので、床とズレることがない。
+
+| 項目 | 値 | 備考 |
+| --- | --- | --- |
+| `Side Prop Offset X` | 6.5 | 床幅10m（端は5m）の外側に出す |
+| 1列の粒数 | 450 | 元の `Particle System.prefab` は1回のバーストで50000個だった |
+| Simulation Space | **World** | Local にするとタイルを動かした瞬間に粒が付いてきて「ペンライトが追尾する」状態になる |
+
+見た目のプレハブ（`Assets/Particle System.prefab`）は**書き換えていない**。
+子として抱えて、並べ方だけ上書きしている。
+
+### 発光について
+
+元の `PenlightMat` は `_EmissionColor` が 0.749 で、Bloom の threshold 0.9 に届かないため
+どれだけ Bloom を足しても光らなかった（これが「のっぺり」の主因）。シェーダが
+`ParticlesUnlit` で陰影も付かないので、ベタ塗りのシルエットになっていた。
+
+`Game_Run` では複製した `Settings_Run/PenlightMat_Run.mat` を使い、
+
+- マテリアルの一律な灰色加算を切る（全体に乗って立体感を消していた）
+- 代わりに**粒ごとのHDRカラー**で光らせる（ピンク寄り〜水色寄りを randomBetweenTwoColors、強度2〜3）
+
+としてある。色を変えたい場合は `Run_PenlightStrip.prefab` の
+ParticleSystem → Start Color を触る。**1.0 を超える値にしないと光らない。**
+
+既存 `PenlightMat` は旧 Game シーンでも使われているため、あえて書き換えていない。
+
+## HUD（仮）
+
+`Canvas/HUD` 配下は**全て仮の見た目**。差し替えるときは `HUD` ごと作り直してよい。
+ゲームロジックが知っているのは次の参照だけなので、これを繋ぎ直せば見た目は自由。
+
+| 繋ぎ先 | 必要なもの |
+| --- | --- |
+| `BeatGaugeView` | `Slider` と、色を変える `Image`（Slider の Fill） |
+| `GameManager` | `scoreText` / `comboText` / `playerHpText` / `rivalHpText` の4つ |
+
+`BeatGaugeView` は Slider の値を書くだけの一方通行なので、Slider をやめて
+独自の画像演出にする場合も、ゲージ側のロジックは無改修で済む。
+
+## Playを押すとタイトルから始まる
+
+`Editor/PlayFromTitle.cs` が `EditorSceneManager.playModeStartScene` に Title を指定している。
+`Game_Run` を編集中に実行しても、難易度選択を通ってから始まる。
+
+単一シーンだけをデバッグしたいときは
+
+```
+Yakiniku > 常にタイトルから再生する
+```
+
+のチェックを外す。設定は `EditorPrefs`（各自の環境ごと）なので、他のメンバーには影響しない。
 
 ---
 
 # 動作確認チェックリスト
+
+## 自動で確認する
+
+```
+Yakiniku > Run > Game_Run を自動プレイして確認
+```
+
+これを実行すると Play モードに入り、下のチェックリストを機械的に確認して
+Console に結果を出す（`Assets/Scripts/Run/Editor/RunSmokeTest.cs`）。
+入力はキーボードの代わりに `PlayerRunner` のAPIを直接呼んでいるので、
+操作しなくても最後まで走る。4倍速で動かすので数秒で終わる。
+
+CIやコマンドラインから回す場合（Unityを閉じた状態で。全項目OKなら終了コード0）:
+
+```
+Unity.exe -batchmode -projectPath <プロジェクトのパス> -executeMethod Yakiniku.Run.EditorTools.RunSmokeTest.Run
+```
+
+譜面を差し替えると期待値（ノーツのZ座標）が合わなくなるので、
+`RunSmokeTest.cs` の先頭の定数も直すこと。
+
+## 自分の目で確認する
 
 Play して以下を確認する。譜面は `spawnZ` が 20〜170 なので、約17秒で終わる。
 
@@ -186,22 +261,29 @@ Play して以下を確認する。譜面は `spawnZ` が 20〜170 なので、�
 - [ ] 矢印キー / A・D で5レーン（-2〜2）を移動でき、両端で止まる
 - [ ] ↑ / W / Space でジャンプし、着地する
 - [ ] 床が途切れずに続く
-- [ ] 20m地点あたりから球（アイテム）が出てくる
-- [ ] 球に触れると消えて、ゲージのスライダーが増える
-- [ ] 60m地点の箱（障害物）に当たるとダメージを受ける（Consoleで確認）
+- [ ] 20m地点あたりから音符（アイテム）が出てくる
+- [ ] 音符に触れると消えて、画面上部のゲージが増える
+- [ ] 60m地点の障害物に当たるとダメージを受ける（Consoleで確認）
 - [ ] 100m地点の低い壁はジャンプで越えられる
 - [ ] ゲージが満タンになると点滅する（フィーバー）
 
 ## うまく動かないとき
 
+シーンを自動生成しているので参照の割当漏れは起きないはずだが、
+手で触って壊した場合は以下を疑う。迷ったら `Yakiniku > Run > Game_Run シーンを生成` を
+もう一度実行すれば元に戻る。
+
 | 症状 | 原因 |
 | --- | --- |
+| `Create` / `Yakiniku` メニューが出てこない | スクリプトがコンパイルできていない。Console を見る |
 | プレイヤーが動かない | `PlayerRunner` の `Settings` 未割当（Console にエラーが出る） |
 | キー入力が効かない | `PlayerRunner` の `Input Source` 未割当 |
 | アイテムをすり抜ける | プレハブの Collider の `Is Trigger` がオフ／`Player` に Rigidbody が無い |
 | 障害物に当たらない | `Player` の Collider が `Is Trigger` になっている（オフにする） |
 | 障害物が出てこない | `Note Prefabs` の `Type` 文字列が譜面JSONと不一致 |
-| 障害物が床に埋まる／浮く | `Spawn Y` がプレハブの高さの半分になっていない |
+| 障害物が床に埋まる／浮く | `RunSpawner` の `Spawn Y`、または `Run_*.prefab` の子のY位置 |
+| スタート直後に被弾する | `Run_*.prefab` の子（見た目側）の Collider が有効に戻っている |
+| モデルが見えない／遠くにある | `PlayerModel` の子の localPosition が 0 になっていない |
 | 床が途切れる | `Tile Length` がプレハブの実寸と不一致／`Pivot At Center` の設定ミス |
 | ゲージが動かない | `BeatGaugeController` の `Player` 未割当 |
 | ゲージUIが動かない | `BeatGaugeView` の `Controller` / `Slider` 未割当 |
