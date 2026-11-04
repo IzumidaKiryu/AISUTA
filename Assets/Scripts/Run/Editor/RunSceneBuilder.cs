@@ -5,6 +5,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.TextCore.LowLevel;
 using UnityEngine.UI;
@@ -34,6 +35,7 @@ namespace Yakiniku.Run.EditorTools
 
         private const string RunSettingsPath = SettingsDir + "/RunSettings.asset";
         private const string GaugeSettingsPath = SettingsDir + "/GaugeSettings.asset";
+        private const string ScoreSettingsPath = SettingsDir + "/ScoreSettings.asset";
 
         // 既存アセット（他メンバー作成。中身は変更せず、子として取り込むだけ）
         private const string ArtFloor = "Assets/Stage_Fixed.prefab";
@@ -103,6 +105,7 @@ namespace Yakiniku.Run.EditorTools
 
                 CreateRunSettings();
                 CreateGaugeSettings();
+                CreateScoreSettings();
 
                 BuildItemPrefab();
                 BuildObstaclePrefab();
@@ -178,6 +181,7 @@ namespace Yakiniku.Run.EditorTools
             settings.damagePenalty = 0.15f;
             settings.feverDuration = 8f;
             settings.drainDuringFever = true;
+            settings.superFeverDuration = 12f;
 
             EditorUtility.SetDirty(settings);
             return settings;
@@ -286,6 +290,26 @@ namespace Yakiniku.Run.EditorTools
             var asset = AssetDatabase.LoadAssetAtPath<T>(path);
             if (asset == null) throw new Exception($"アセットを読み込めません: {path}");
             return asset;
+        }
+
+        private static ScoreSettings CreateScoreSettings()
+        {
+            var settings = LoadOrCreate<ScoreSettings>(ScoreSettingsPath);
+
+            settings.comboRate = 0.02f;
+            settings.comboBonusMax = 2f;
+            settings.gaugeBonusMax = 1f;
+            settings.rivalDefeatBonus = 0.5f;
+            settings.feverMultiplier = 2f;
+            settings.superFeverMultiplier = 4f;
+            settings.maxMultiplier = 10f;
+            settings.rivalMaxHp = 50;
+            settings.rivalHearts = 3;
+            settings.rivalDamagePerHit = 1;
+            settings.rivalRespawns = true;
+
+            EditorUtility.SetDirty(settings);
+            return settings;
         }
 
         private static T LoadOrCreate<T>(string path) where T : ScriptableObject
@@ -658,23 +682,25 @@ namespace Yakiniku.Run.EditorTools
             bgm.playOnAwake = true;
             bgm.loop = false;
 
-            // --- HUD（スコア・コンボ・HP・ゲージ） ---
-            var hud = BuildHud(gauge);
+            // --- ライバル ---
+            var scoreSettings = Reload<ScoreSettings>(ScoreSettingsPath);
 
-            // --- 既存 GameManager（スコア計算とUI更新を任せる） ---
-            var managerGo = new GameObject("GameManager");
-            var manager = managerGo.AddComponent<GameManager>();
-            manager.scoreText = hud.Score;
-            manager.comboText = hud.Combo;
-            manager.playerHpText = hud.PlayerHp;
-            manager.rivalHpText = hud.RivalHp;
-            manager.bgmSource = null; // 上記の理由で意図的に空
+            var rivalGo = new GameObject("Rival");
+            var rival = rivalGo.AddComponent<RunRival>();
+            SetField(rival, "settings", scoreSettings);
+            SetField(rival, "gauge", gauge); // ハート全割りでフィーバーを頼む相手
+            SetField(rival, "rivalName", "ライバル");
 
-            // --- ランゲーム → GameManager の繋ぎ ---
-            var bridgeGo = new GameObject("RunGameBridge");
-            var bridge = bridgeGo.AddComponent<RunGameBridge>();
-            SetField(bridge, "player", runner);
-            SetField(bridge, "gauge", gauge);
+            // --- スコアと倍率 ---
+            var scoreGo = new GameObject("Score");
+            var score = scoreGo.AddComponent<RunScore>();
+            SetField(score, "settings", scoreSettings);
+            SetField(score, "player", runner);
+            SetField(score, "gauge", gauge);
+            SetField(score, "rival", rival);
+
+            // --- HUD ---
+            BuildHud(gauge, score, rival, runner);
 
             // --- ゴール判定 ---
             var goalGo = new GameObject("GoalWatcher");
@@ -682,6 +708,7 @@ namespace Yakiniku.Run.EditorTools
             SetField(goal, "condition", (int)RunClearCondition.ChartEnd);
             SetField(goal, "player", runner);
             SetField(goal, "spawner", spawner);
+            SetField(goal, "score", score);
             SetField(goal, "bgmSource", bgm);
             SetField(goal, "goalMarginZ", 15f);
             SetField(goal, "resultSceneName", "Result");
@@ -711,6 +738,16 @@ namespace Yakiniku.Run.EditorTools
             volume.name = "Global Volume";
             volume.transform.position = Vector3.zero;
 
+            // フィーバー中に画面全体の Bloom を上げて派手にする
+            var feverEffect = volume.AddComponent<FeverScreenEffect>();
+            SetField(feverEffect, "gauge", gauge);
+            SetField(feverEffect, "volume", volume.GetComponent<Volume>());
+            SetField(feverEffect, "feverIntensity", 4f);
+            SetField(feverEffect, "superFeverIntensity", 9f);
+            SetField(feverEffect, "superPulseSpeed", 8f);
+            SetField(feverEffect, "superPulseAmount", 3f);
+            SetField(feverEffect, "blendSpeed", 6f);
+
             EditorSceneManager.SaveScene(scene, ScenePath);
 
             // 同名の空シーンが Assets 直下に残っていると、どちらを開くのか分からなくなる
@@ -737,34 +774,21 @@ namespace Yakiniku.Run.EditorTools
             }
         }
 
-        /// <summary>組み上げたHUDのうち、GameManager に渡す必要があるテキスト。</summary>
-        private readonly struct HudRefs
-        {
-            public readonly TextMeshProUGUI Score;
-            public readonly TextMeshProUGUI Combo;
-            public readonly TextMeshProUGUI PlayerHp;
-            public readonly TextMeshProUGUI RivalHp;
-
-            public HudRefs(TextMeshProUGUI score, TextMeshProUGUI combo,
-                           TextMeshProUGUI playerHp, TextMeshProUGUI rivalHp)
-            {
-                Score = score;
-                Combo = combo;
-                PlayerHp = playerHp;
-                RivalHp = rivalHp;
-            }
-        }
-
         /// <summary>
         /// HUDを組む。中身は全て仮の見た目で、後から差し替える前提。
         ///
+        /// 配置は参考画面に寄せてある。
+        ///   画面最上部 … キラメキビートゲージ（オリジナル要素なので一番上）
+        ///   そのすぐ下 … ライバルの体力バー（名前とハート付き）
+        ///   左上       … COMBO / SCORE / 倍率
+        ///   左下       … LIFE（プレイヤーのハート）
+        ///
         /// 差し替えるときは `Canvas/HUD` 配下を好きに作り直してよい。
-        /// ゲームロジック側が知っているのは
-        ///   ・BeatGaugeView の Slider と Fill Image
-        ///   ・GameManager の4つの TextMeshProUGUI
-        /// だけなので、この参照さえ繋ぎ直せば見た目は自由に変えられる。
+        /// ロジック側が知っているのは BeatGaugeView と RunHudView の参照だけなので、
+        /// そこを繋ぎ直せば見た目は自由に変えられる。
         /// </summary>
-        private static HudRefs BuildHud(BeatGaugeController controller)
+        private static void BuildHud(
+            BeatGaugeController controller, RunScore score, RunRival rival, PlayerRunner player)
         {
             var canvasGo = new GameObject("Canvas");
             var canvas = canvasGo.AddComponent<Canvas>();
@@ -828,28 +852,94 @@ namespace Yakiniku.Run.EditorTools
             SetField(view, "feverColor", new Color(1f, 0.85f, 0.25f));
             SetField(view, "feverPulseSpeed", 6f);
 
-            // ここから下は全て仮の見た目
-            CreateText(hudGo, "GaugeLabel", "キラメキビート", 24f,
-                new Vector2(0.5f, 1f), new Vector2(0f, -24f), new Vector2(760f, 30f),
+            CreateText(hudGo, "GaugeLabel", "キラメキビート", 22f,
+                new Vector2(0.5f, 1f), new Vector2(0f, -22f), new Vector2(760f, 26f),
                 TextAlignmentOptions.Center);
 
-            var score = CreateText(hudGo, "ScoreText", "Score: 0", 36f,
-                new Vector2(0f, 1f), new Vector2(32f, -32f), new Vector2(420f, 46f),
+            // --- ライバルの体力バー（ゲージのすぐ下） ---
+            var rivalBarGo = DefaultControls.CreateSlider(GetUIResources());
+            rivalBarGo.name = "RivalHpBar";
+            rivalBarGo.transform.SetParent(hudGo.transform, false);
+
+            var rivalRect = rivalBarGo.GetComponent<RectTransform>();
+            rivalRect.anchorMin = new Vector2(0.5f, 1f);
+            rivalRect.anchorMax = new Vector2(0.5f, 1f);
+            rivalRect.pivot = new Vector2(0.5f, 1f);
+            rivalRect.anchoredPosition = new Vector2(0f, -94f);
+            rivalRect.sizeDelta = new Vector2(620f, 20f);
+
+            var rivalBar = rivalBarGo.GetComponent<Slider>();
+            rivalBar.minValue = 0f;
+            rivalBar.maxValue = 1f;
+            rivalBar.wholeNumbers = false;
+            rivalBar.value = 1f;
+            rivalBar.interactable = false;
+
+            var rivalHandle = rivalBarGo.transform.Find("Handle Slide Area");
+            if (rivalHandle != null) rivalHandle.gameObject.SetActive(false);
+
+            Image rivalFill = null;
+            var rivalFillTransform = rivalBarGo.transform.Find("Fill Area/Fill");
+            if (rivalFillTransform != null) rivalFill = rivalFillTransform.GetComponent<Image>();
+
+            var rivalNameText = CreateText(hudGo, "RivalNameText", "ライバル", 20f,
+                new Vector2(0.5f, 1f), new Vector2(-312f, -90f), new Vector2(260f, 26f),
+                TextAlignmentOptions.Left);
+
+            var rivalHeartsText = CreateText(hudGo, "RivalHeartsText", "♥♥♥", 24f,
+                new Vector2(0.5f, 1f), new Vector2(312f, -90f), new Vector2(160f, 26f),
+                TextAlignmentOptions.Right);
+
+            // --- 左上のスコア類 ---
+            var comboText = CreateText(hudGo, "ComboText", "0", 64f,
+                new Vector2(0f, 1f), new Vector2(32f, -130f), new Vector2(420f, 72f),
                 TextAlignmentOptions.TopLeft);
 
-            var combo = CreateText(hudGo, "ComboText", "Combo: 0", 36f,
-                new Vector2(0f, 1f), new Vector2(32f, -84f), new Vector2(420f, 46f),
+            CreateText(hudGo, "ComboLabel", "COMBO", 22f,
+                new Vector2(0f, 1f), new Vector2(34f, -200f), new Vector2(420f, 28f),
                 TextAlignmentOptions.TopLeft);
 
-            var rivalHp = CreateText(hudGo, "RivalHPText", "Rival HP: 50", 36f,
-                new Vector2(1f, 1f), new Vector2(-32f, -32f), new Vector2(420f, 46f),
-                TextAlignmentOptions.TopRight);
+            var multiplierText = CreateText(hudGo, "MultiplierText", "x1.00", 32f,
+                new Vector2(0f, 1f), new Vector2(34f, -234f), new Vector2(420f, 40f),
+                TextAlignmentOptions.TopLeft);
 
-            var playerHp = CreateText(hudGo, "PlayerHPText", "Player HP: 3", 36f,
-                new Vector2(0f, 0f), new Vector2(32f, 32f), new Vector2(420f, 46f),
+            CreateText(hudGo, "ScoreLabel", "SCORE", 22f,
+                new Vector2(0f, 1f), new Vector2(34f, -284f), new Vector2(420f, 28f),
+                TextAlignmentOptions.TopLeft);
+
+            var scoreText = CreateText(hudGo, "ScoreText", "0", 40f,
+                new Vector2(0f, 1f), new Vector2(32f, -312f), new Vector2(420f, 50f),
+                TextAlignmentOptions.TopLeft);
+
+            // --- 左下のライフ ---
+            CreateText(hudGo, "LifeLabel", "LIFE", 22f,
+                new Vector2(0f, 0f), new Vector2(34f, 72f), new Vector2(240f, 28f),
                 TextAlignmentOptions.BottomLeft);
 
-            return new HudRefs(score, combo, playerHp, rivalHp);
+            var lifeText = CreateText(hudGo, "LifeText", "♥♥♥", 36f,
+                new Vector2(0f, 0f), new Vector2(32f, 28f), new Vector2(240f, 44f),
+                TextAlignmentOptions.BottomLeft);
+
+            // フィーバー中だけ出す。画面中央やや上に大きく
+            var feverText = CreateText(hudGo, "FeverText", "FEVER!", 56f,
+                new Vector2(0.5f, 0.5f), new Vector2(0f, 220f), new Vector2(900f, 80f),
+                TextAlignmentOptions.Center);
+            feverText.gameObject.SetActive(false);
+
+            var hudView = hudGo.AddComponent<RunHudView>();
+            SetField(hudView, "gauge", controller);
+            SetField(hudView, "feverText", feverText);
+            SetField(hudView, "score", score);
+            SetField(hudView, "rival", rival);
+            SetField(hudView, "player", player);
+            SetField(hudView, "rivalHpBar", rivalBar);
+            SetField(hudView, "rivalHpFill", rivalFill);
+            SetField(hudView, "rivalNameText", rivalNameText);
+            SetField(hudView, "rivalHeartsText", rivalHeartsText);
+            SetField(hudView, "scoreText", scoreText);
+            SetField(hudView, "comboText", comboText);
+            SetField(hudView, "multiplierText", multiplierText);
+            SetField(hudView, "lifeText", lifeText);
         }
 
         /// <summary>仮UI用のテキストを1つ作る。</summary>

@@ -76,6 +76,15 @@ namespace Yakiniku.Run.EditorTools
             private BeatGaugeController gauge;
             private GroundTiler ground;
             private RunGoalWatcher goal;
+            private RunScore score;
+            private RunRival rival;
+
+            // スコア倍率とライバルの推移
+            private float startMultiplier = -1f;
+            private float maxMultiplier;
+            private int maxDefeats;
+            private int minHearts = int.MaxValue;
+            private int scoreAtFirstItem = -1;
 
             // ペンライトが床の両サイドに居るかの確認用
             private int penlightLeft = -1;
@@ -111,6 +120,8 @@ namespace Yakiniku.Run.EditorTools
                 gauge = FindFirstObjectByType<BeatGaugeController>();
                 ground = FindFirstObjectByType<GroundTiler>();
                 goal = FindFirstObjectByType<RunGoalWatcher>();
+                score = FindFirstObjectByType<RunScore>();
+                rival = FindFirstObjectByType<RunRival>();
 
                 if (player == null)
                 {
@@ -194,6 +205,20 @@ namespace Yakiniku.Run.EditorTools
                 if (penlightLeft < 0 && z > 20f) MeasurePenlights();
 
                 maxZ = Mathf.Max(maxZ, z);
+
+                // --- スコア倍率とライバルの推移を追う ---
+                if (score != null)
+                {
+                    if (startMultiplier < 0f) startMultiplier = score.Multiplier;
+                    maxMultiplier = Mathf.Max(maxMultiplier, score.Multiplier);
+                    if (scoreAtFirstItem < 0 && score.Score > 0) scoreAtFirstItem = score.Score;
+                }
+
+                if (rival != null)
+                {
+                    maxDefeats = Mathf.Max(maxDefeats, rival.Defeats);
+                    minHearts = Mathf.Min(minHearts, rival.Hearts);
+                }
 
                 // --- 低い壁はジャンプで越える ---
                 TryWall(0, JumpWallZ, z);
@@ -294,6 +319,8 @@ namespace Yakiniku.Run.EditorTools
                 Check(goal != null && goal.IsFinished,
                     $"譜面を走り切ってゴール判定が出る（到達 Z={maxZ:F1}）");
 
+                CheckScoreAndRival();
+
                 if (ground != null)
                 {
                     float farthest = float.MinValue;
@@ -387,6 +414,114 @@ namespace Yakiniku.Run.EditorTools
                     missingAll.Count == 0
                         ? $"HUDの文字が全てフォントにある（{checkedCount}個のテキストを確認）"
                         : "フォントに無い文字がある: " + string.Join(" ", missingAll));
+            }
+
+            /// <summary>
+            /// スコア・倍率・ライバルの確認。
+            ///
+            /// 今の譜面はアイテムが8個しか無く、レーン0で拾えるのは2個なので、
+            /// ライバル(体力50)を自然に倒し切ることはできない。
+            /// そこで走り終えてから直接ダメージを与え、
+            /// 「削り切る → ハートが1つ減る → 全部割れたらフィーバー」の流れを確かめる。
+            /// </summary>
+            private void CheckScoreAndRival()
+            {
+                if (score == null || rival == null)
+                {
+                    Fail("RunScore / RunRival がシーンに無い");
+                    return;
+                }
+
+                Check(score.Score > 0, $"アイテム取得でスコアが入る（{score.Score}点）");
+                Check(maxMultiplier > 1f,
+                    $"コンボとゲージでスコア倍率が上がる（最大 x{maxMultiplier:F2}）");
+
+                // --- ここから直接ライバルを削る ---
+                int heartsBefore = rival.Hearts;
+                int defeatsBefore = rival.Defeats;
+
+                // 走行中に既に何発か入っているので、残り体力ぶんだけ叩いて
+                // ちょうど1本だけ削り切る
+                int hitsToBreak = rival.Hp;
+                for (int i = 0; i < hitsToBreak; i++) rival.ApplyHit();
+
+                Check(rival.Defeats == defeatsBefore + 1,
+                    $"体力バーを削り切ると撃破数が増える（{defeatsBefore} → {rival.Defeats}）");
+                Check(rival.Hearts == heartsBefore - 1,
+                    $"撃破するとハートが1つ減る（{heartsBefore} → {rival.Hearts}）");
+                Check(rival.Hp == rival.MaxHp,
+                    $"ハートが残っていれば体力バーが回復する（{rival.Hp}/{rival.MaxHp}）");
+
+                // 残りのハートを全部割る
+                while (rival.Hearts > 0 && rival.Defeats < rival.MaxHearts * 2)
+                {
+                    rival.ApplyHit();
+                }
+
+                Check(gauge != null && gauge.IsFever,
+                    $"ハートを全部割るとフィーバーが始まる（フィーバー={gauge?.IsFever}）");
+
+                CheckSuperFever();
+
+                // --- 倍率の計算式そのものを確かめる ---
+                var settings = UnityEditor.AssetDatabase
+                    .LoadAssetAtPath<ScoreSettings>("Assets/Settings_Run/ScoreSettings.asset");
+
+                if (settings == null)
+                {
+                    Fail("ScoreSettings が読み込めない");
+                    return;
+                }
+
+                float noDefeat = settings.CalculateMultiplier(0, 0f, 0, false);
+                float withDefeats = settings.CalculateMultiplier(0, 0f, 3, false);
+                float withGauge = settings.CalculateMultiplier(0, 1f, 0, false);
+                float withFever = settings.CalculateMultiplier(0, 0f, 0, true);
+
+                Check(withDefeats > noDefeat,
+                    $"ライバル撃破で倍率が上がる（撃破0: x{noDefeat:F2} → 撃破3: x{withDefeats:F2}）");
+                Check(withGauge > noDefeat,
+                    $"ゲージ満タンで倍率が上がる（x{noDefeat:F2} → x{withGauge:F2}）");
+                Check(withFever > noDefeat,
+                    $"フィーバーで倍率が上がる（x{noDefeat:F2} → x{withFever:F2}）");
+            }
+
+            /// <summary>
+            /// スーパーフィーバーへの昇格を確かめる。
+            ///
+            /// ここに来た時点で、ライバルのハート全割りによるフィーバーが掛かっている。
+            /// 同じきっかけを重ねても昇格しないこと、もう一方のきっかけで昇格することの
+            /// 両方を見る。「演出でゲージを満タンにしただけ」で勝手に昇格しないことも確認する。
+            /// </summary>
+            private void CheckSuperFever()
+            {
+                if (gauge == null)
+                {
+                    Fail("BeatGaugeController がシーンに無い");
+                    return;
+                }
+
+                Check(!gauge.IsSuperFever,
+                    $"きっかけ1つではスーパーフィーバーにならない（発動源={gauge.Sources}）");
+
+                // 同じきっかけをもう一度。これで上がってしまうと連取で暴発する
+                gauge.TriggerFever(FeverSource.Rival);
+                Check(!gauge.IsSuperFever, "同じきっかけを重ねても昇格しない");
+
+                // もう一方のきっかけ
+                gauge.TriggerFever(FeverSource.Gauge);
+                Check(gauge.IsSuperFever,
+                    $"2つのきっかけが揃うとスーパーフィーバーになる（発動源={gauge.Sources}）");
+
+                var settings = UnityEditor.AssetDatabase
+                    .LoadAssetAtPath<ScoreSettings>("Assets/Settings_Run/ScoreSettings.asset");
+                if (settings == null) return;
+
+                float fever = settings.CalculateMultiplier(0, 0f, 0, true, false);
+                float superFever = settings.CalculateMultiplier(0, 0f, 0, true, true);
+
+                Check(superFever > fever,
+                    $"スーパーフィーバーは通常より倍率が高い（x{fever:F2} → x{superFever:F2}）");
             }
 
             private void Check(bool ok, string label)
