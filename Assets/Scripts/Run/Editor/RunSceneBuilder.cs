@@ -5,6 +5,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.Rendering.Universal;
 using UnityEngine.UI;
 using Yakiniku.Run.Inputs;
 using Object = UnityEngine.Object;
@@ -41,6 +42,7 @@ namespace Yakiniku.Run.EditorTools
         private const string ArtJumpObstacle = "Assets/JumpObstacle.prefab";
 
         private const string ArtPenlight = "Assets/Particle System.prefab";
+        private const string ArtGlobalVolume = "Assets/Global Volume.prefab";
         private const string BgmPath = "Assets/Resources/ぼららら.wav";
         private const string TmpFontPath =
             "Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF.asset";
@@ -291,11 +293,7 @@ namespace Yakiniku.Run.EditorTools
                 // タイル1枚が視界から消えるまで持てばよい。回収時に Clear するので溜まらない
                 main.startLifetime = 60f;
 
-                // 発光色はここで持つ。HDR(1超)にしないと Bloom の threshold 0.9 を越えられず、
-                // どれだけ Bloom を足しても光らない（これが「のっぺり」の原因）
-                main.startColor = new ParticleSystem.MinMaxGradient(
-                    new Color(2.6f, 0.9f, 2.2f),   // ピンク寄り
-                    new Color(0.7f, 2.0f, 2.8f));  // 水色寄り
+                main.startColor = CreatePenlightColors();
 
                 var emission = ps.emission;
                 emission.enabled = true;
@@ -325,6 +323,51 @@ namespace Yakiniku.Run.EditorTools
             {
                 Object.DestroyImmediate(root);
             }
+        }
+
+        /// <summary>
+        /// ペンライトの発光色。粒ごとに1色を選ばせる。
+        ///
+        /// 【2色のランダム補間にしてはいけない】
+        /// MinMaxGradient の TwoColors は2色の「間」をランダムに取るので、
+        /// 補色に近い2色（ピンクと水色など）を指定すると中間がほぼ白になり、
+        /// 結果として大半のペンライトが白くなる。
+        /// Gradient を Fixed（段階）にして RandomColor で引けば、各粒は必ず
+        /// 指定した色のどれかになり、彩度が残る。
+        ///
+        /// 明るい色にしてあるのは Bloom で光らせるため。
+        /// Global Volume Profile 1 の Bloom は threshold 0.2 なので、
+        /// 1.0 未満の成分があっても十分にじむ。
+        /// </summary>
+        private static ParticleSystem.MinMaxGradient CreatePenlightColors()
+        {
+            var colors = new[]
+            {
+                new Color(1.9f, 0.15f, 0.75f), // ピンク
+                new Color(0.15f, 1.2f, 1.9f),  // 水色
+                new Color(0.55f, 1.9f, 0.3f),  // 黄緑
+                new Color(1.9f, 0.9f, 0.15f),  // 橙
+                new Color(0.9f, 0.25f, 1.9f),  // 紫
+            };
+
+            var keys = new GradientColorKey[colors.Length];
+            for (int i = 0; i < colors.Length; i++)
+            {
+                // 等間隔に並べる。Fixed なので境目で切り替わる
+                keys[i] = new GradientColorKey(colors[i], i / (float)(colors.Length - 1));
+            }
+
+            var gradient = new Gradient { mode = GradientMode.Fixed };
+            gradient.SetKeys(keys, new[]
+            {
+                new GradientAlphaKey(1f, 0f),
+                new GradientAlphaKey(1f, 1f),
+            });
+
+            return new ParticleSystem.MinMaxGradient(gradient)
+            {
+                mode = ParticleSystemGradientMode.RandomColor,
+            };
         }
 
         /// <summary>
@@ -524,7 +567,19 @@ namespace Yakiniku.Run.EditorTools
                 var follow = camera.gameObject.GetComponent<CameraController>();
                 if (follow == null) follow = camera.gameObject.AddComponent<CameraController>();
                 follow.player = player.transform;
+
+                // これを入れないと Volume の Bloom が一切掛からない。
+                // 新規シーンのカメラは既定でポストプロセスがオフになっている
+                var cameraData = camera.GetUniversalAdditionalCameraData();
+                if (cameraData != null) cameraData.renderPostProcessing = true;
             }
+
+            // --- ポストプロセス ---
+            // ペンライトは Bloom でにじませて光らせる前提なので、Volume が無いと
+            // ただの明るいベタ塗り（＝白い棒）になる。既存シーンと同じプレハブを使う
+            var volume = InstantiateArt(ArtGlobalVolume);
+            volume.name = "Global Volume";
+            volume.transform.position = Vector3.zero;
 
             EditorSceneManager.SaveScene(scene, ScenePath);
 
@@ -643,8 +698,11 @@ namespace Yakiniku.Run.EditorTools
             SetField(view, "feverColor", new Color(1f, 0.85f, 0.25f));
             SetField(view, "feverPulseSpeed", 6f);
 
-            // ここから下は全て仮の見た目
-            CreateText(hudGo, "GaugeLabel", "キラメキビート", 24f,
+            // ここから下は全て仮の見た目。
+            // 文字列を日本語にすると豆腐(□)になる。TMPの既定フォント
+            // LiberationSans SDF に日本語グリフが無いため。日本語を出したい場合は
+            // 日本語フォントから TMP Font Asset を作って差し替えること
+            CreateText(hudGo, "GaugeLabel", "KIRAMEKI BEAT", 24f,
                 new Vector2(0.5f, 1f), new Vector2(0f, -24f), new Vector2(760f, 30f),
                 TextAlignmentOptions.Center);
 

@@ -3,6 +3,8 @@ using System.Text;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
 
 namespace Yakiniku.Run.EditorTools
 {
@@ -281,6 +283,9 @@ namespace Yakiniku.Run.EditorTools
                 Check(penlightLeft > 0 && penlightRight > 0,
                     $"ペンライトが床の両サイドに居る（左{penlightLeft}列 / 右{penlightRight}列）");
 
+                CheckBloomReady();
+                CheckPenlightColors();
+
                 Check(goal != null && goal.IsFinished,
                     $"譜面を走り切ってゴール判定が出る（到達 Z={maxZ:F1}）");
 
@@ -299,6 +304,56 @@ namespace Yakiniku.Run.EditorTools
                 {
                     Fail("GroundTiler がシーンに無い");
                 }
+            }
+
+            /// <summary>
+            /// Bloom が掛かる状態か。Volume を置いてもカメラ側のポストプロセスが
+            /// オフだと一切効かず、ペンライトがただの明るいベタ塗りになる。
+            /// </summary>
+            private void CheckBloomReady()
+            {
+                var cam = Camera.main;
+                var data = cam != null ? cam.GetUniversalAdditionalCameraData() : null;
+                bool postOn = data != null && data.renderPostProcessing;
+                bool hasVolume = FindFirstObjectByType<Volume>() != null;
+
+                Check(postOn && hasVolume,
+                    $"Bloomが掛かる状態（カメラのポストプロセス={postOn} / Volume={hasVolume}）");
+            }
+
+            /// <summary>
+            /// ペンライトの色が白に寄っていないか。
+            /// 2色のランダム補間にすると中間が白くなり、大半が白い棒になる。
+            /// 各色についてRGBの最大と最小の差を見て、彩度が残っているかを確かめる。
+            /// </summary>
+            private void CheckPenlightColors()
+            {
+                var strip = FindFirstObjectByType<PenlightStrip>();
+                var ps = strip != null ? strip.GetComponentInChildren<ParticleSystem>(true) : null;
+                if (ps == null)
+                {
+                    Fail("ペンライトのParticleSystemが見つからない");
+                    return;
+                }
+
+                var startColor = ps.main.startColor;
+                float worst = 1f;
+                int sampled = 0;
+
+                // 0〜1を刻んで実際に引かれうる色を見る
+                for (int i = 0; i <= 10; i++)
+                {
+                    Color c = startColor.Evaluate(0f, i / 10f);
+                    float max = Mathf.Max(c.r, Mathf.Max(c.g, c.b));
+                    float min = Mathf.Min(c.r, Mathf.Min(c.g, c.b));
+                    if (max <= 0f) continue;
+
+                    worst = Mathf.Min(worst, (max - min) / max);
+                    sampled++;
+                }
+
+                Check(sampled > 0 && worst > 0.4f,
+                    $"ペンライトの色が白に寄っていない（最も白い色の彩度 {worst:F2}）");
             }
 
             private void Check(bool ok, string label)
