@@ -124,6 +124,10 @@ namespace Yakiniku.Run.EditorTools
 
                 player.OnItemCollected += _ => itemsCollected++;
 
+                // バッチモードでも音は再生される。自動テストは裏で何度も走らせるので、
+                // 作業中に突然BGMが鳴り出すのを防ぐため消音する
+                AudioListener.volume = 0f;
+
                 // 17秒ぶんの譜面を待つのは長いので早送りする
                 Time.timeScale = 4f;
             }
@@ -285,6 +289,7 @@ namespace Yakiniku.Run.EditorTools
 
                 CheckBloomReady();
                 CheckPenlightColors();
+                CheckTextGlyphs();
 
                 Check(goal != null && goal.IsFinished,
                     $"譜面を走り切ってゴール判定が出る（到達 Z={maxZ:F1}）");
@@ -354,6 +359,34 @@ namespace Yakiniku.Run.EditorTools
 
                 Check(sampled > 0 && worst > 0.4f,
                     $"ペンライトの色が白に寄っていない（最も白い色の彩度 {worst:F2}）");
+            }
+
+            /// <summary>
+            /// HUDの文字が全部フォントに存在するか。
+            /// 足りない字は豆腐(□)として描かれるが、見た目では気づきにくいので機械的に見る。
+            /// </summary>
+            private void CheckTextGlyphs()
+            {
+                var missingAll = new List<string>();
+                int checkedCount = 0;
+
+                foreach (var label in FindObjectsByType<TMPro.TMP_Text>(FindObjectsSortMode.None))
+                {
+                    if (string.IsNullOrEmpty(label.text) || label.font == null) continue;
+
+                    checkedCount++;
+                    if (label.font.HasCharacters(label.text, out var missing) || missing == null) continue;
+
+                    foreach (char c in missing)
+                    {
+                        missingAll.Add($"{label.name}:'{c}'");
+                    }
+                }
+
+                Check(checkedCount > 0 && missingAll.Count == 0,
+                    missingAll.Count == 0
+                        ? $"HUDの文字が全てフォントにある（{checkedCount}個のテキストを確認）"
+                        : "フォントに無い文字がある: " + string.Join(" ", missingAll));
             }
 
             private void Check(bool ok, string label)

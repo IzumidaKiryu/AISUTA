@@ -220,10 +220,8 @@ Gradient を **Fixed（段階）** にして **Random Color** で引けば、各
 
 `Canvas/HUD` 配下は**全て仮の見た目**。
 
-**UIに日本語は出せない。** TMPの既定フォント `LiberationSans SDF` に日本語グリフが
-無いため、日本語を入れると豆腐(□)になる。日本語を出したい場合は日本語フォントから
-TMP Font Asset を作って差し替えること。既存のスコア・HP表示が読めているのは
-全てASCIIだから。
+日本語を出すためのフォントは `Assets/Fonts/` にある（詳細はそちらのREADME）。
+TMP の Fallback に登録してあるので、他のシーンのテキストも日本語が出る。
 差し替えるときは `HUD` ごと作り直してよい。
 ゲームロジックが知っているのは次の参照だけなので、これを繋ぎ直せば見た目は自由。
 
@@ -234,6 +232,29 @@ TMP Font Asset を作って差し替えること。既存のスコア・HP表示
 
 `BeatGaugeView` は Slider の値を書くだけの一方通行なので、Slider をやめて
 独自の画像演出にする場合も、ゲージ側のロジックは無改修で済む。
+
+## シーン生成スクリプトを触るときの注意
+
+`EditorSceneManager.NewScene` は、シーンを切り替える際に**どこからも参照されていない
+アセットをメモリから破棄する**。そのため
+
+```csharp
+var settings = AssetDatabase.LoadAssetAtPath<RunSettings>(path);  // ここで読んで
+var scene = EditorSceneManager.NewScene(...);                     // ここで破棄され
+SetField(runner, "settings", settings);                           // null が入る
+```
+
+という順で書くと、**シーンは問題なく生成されるのに参照だけ空**という壊れ方をする。
+Play しても「RunSettings が設定されていません」と出てプレイヤーが動かない。
+
+アセットの取得は必ず `NewScene` の**後**に行うこと。`SetField` には破棄済み参照を
+弾くガードを入れてあるので、間違えた場合は例外で止まる。
+
+## 自動テストと音
+
+`RunSmokeTest` は `-batchmode` でも Play モードに入るため、そのままだと
+BGM がスピーカーから鳴る。作業中に裏で鳴り出すのを防ぐため、
+テスト開始時に `AudioListener.volume = 0` にしてある。
 
 ## Playを押すとタイトルから始まる
 
