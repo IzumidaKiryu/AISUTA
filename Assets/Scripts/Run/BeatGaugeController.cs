@@ -103,6 +103,25 @@ namespace Yakiniku.Run
             }
         }
 
+        /// <summary>
+        /// 外からフィーバーを発動させる。ライバルのハートを全部割ったときに呼ばれる。
+        ///
+        /// フィーバーのきっかけは「ゲージ満タン」と「ハート全割り」の2つあるが、
+        /// 状態の持ち主をこのクラス1つに保つため、発動はここを通す。
+        /// 既にフィーバー中なら何も起きない。
+        /// </summary>
+        public void TriggerFever()
+        {
+            if (settings == null || settings.feverDuration <= 0f || IsFever) return;
+
+            // 先にフィーバー状態にしてからゲージを満タンにする。
+            // 逆にすると Gauge.OnFull → HandleGaugeFull が走って二重に発動してしまう
+            IsFever = true;
+            feverTimer = settings.feverDuration;
+            Gauge.Fill();
+            OnFeverStart?.Invoke();
+        }
+
         /// <summary>外部からゲージを増減する（ライバル用のAI加算や、デバッグ、演出連動に使う）。</summary>
         public void AddGauge(float amount)
         {

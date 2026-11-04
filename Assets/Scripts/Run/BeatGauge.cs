@@ -34,6 +34,9 @@ namespace Yakiniku.Run
         /// <summary>0に戻す。</summary>
         public void Reset() => SetValue(0f);
 
+        /// <summary>満タンにする。ゲージ以外のきっかけでフィーバーに入るときに使う。</summary>
+        public void Fill() => SetValue(1f);
+
         private void SetValue(float next)
         {
             next = Mathf.Clamp01(next);

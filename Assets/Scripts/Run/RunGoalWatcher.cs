@@ -37,6 +37,9 @@ namespace Yakiniku.Run
         [SerializeField] private PlayerRunner player;
         [SerializeField] private RunSpawner spawner;
 
+        [Tooltip("最終スコアの取得元。未設定なら既存 GameManager から取る")]
+        [SerializeField] private RunScore score;
+
         [Tooltip("BgmLength のときに見るBGM。ChartEnd のときは使わない")]
         [SerializeField] private AudioSource bgmSource;
 
@@ -124,7 +127,11 @@ namespace Yakiniku.Run
             if (player != null) player.SetRunning(false);
 
             // スコアをリザルトへ引き継ぐ（既存 GameData をそのまま使う）
-            if (GameManager.instance != null)
+            if (score != null)
+            {
+                GameData.finalScore = score.Score;
+            }
+            else if (GameManager.instance != null)
             {
                 GameData.finalScore = GameManager.instance.score;
             }

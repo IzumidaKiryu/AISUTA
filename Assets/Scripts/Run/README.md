@@ -37,7 +37,11 @@
 | `GaugeSettings.cs` | ゲージの増減ルール(SO) |
 | `BeatGaugeController.cs` | ルールを実行してゲージを増減させる。フィーバー管理 |
 | `BeatGaugeView.cs` | Slider への表示 |
-| `RunGameBridge.cs` | 既存 `GameManager` への繋ぎ役（スコア・HP表示） |
+| `ScoreSettings.cs` | スコア倍率とライバルの設定(SO)。**バランス調整は全てここ** |
+| `RunRival.cs` | ライバルの体力・ハート・撃破数 |
+| `RunScore.cs` | スコアとコンボ、倍率の合成 |
+| `RunHudView.cs` | HUDの表示（体力バー・ハート・スコア・倍率） |
+| `RunGameBridge.cs` | 既存 `GameManager` への繋ぎ役。Game_Run では未使用（旧シーン向けに残置） |
 | `RunGoalWatcher.cs` | ステージ終了の判定とリザルトへの遷移。**譜面基準／曲基準を切替** |
 | `PenlightStrip.cs` | 床タイルの脇に並ぶペンライト1列。タイルが回されたら撒き直す |
 | `Editor/RunSceneBuilder.cs` | シーン・設定アセット・プレハブの自動生成 |
@@ -215,6 +219,72 @@ Gradient を **Fixed（段階）** にして **Random Color** で引けば、各
 指定した色のどれかになり彩度が残る。現在はピンク／水色／黄緑／橙／紫の5色。
 
 既存 `PenlightMat` は旧 Game シーンでも使われているため、あえて書き換えていない。
+
+## スコア倍率とライバル
+
+### ライバル
+
+本家はこの位置がライバルの体力バーで、削り切るとハートが1つ減り、
+ハートが全部なくなるとフィーバーという作り。キラメキビートゲージを
+オリジナル要素として最上部に置いたので、ライバル体力はそのすぐ下に出している。
+
+| 流れ | 実装 |
+| --- | --- |
+| アイテムを取る | `RunScore` が `RunRival.ApplyHit()` を呼ぶ |
+| 体力バーを削り切る | ハートが1つ減り、撃破数が1増える。体力バーは満タンに戻る |
+| ハートを全部割る | `BeatGaugeController.TriggerFever()` でフィーバー発動 |
+
+フィーバーのきっかけは「ゲージ満タン」と「ハート全割り」の2つあるが、
+**状態の持ち主は `BeatGaugeController` 1つ**に保っている。
+`TriggerFever()` は発動を依頼するだけ。
+
+`rivalRespawns` をオンにしてあるので、ハートを全部割ったあとライバルは復活する。
+撃破数は通算で積み上がり、そのままスコア倍率の加算要素になる。
+
+### 倍率の計算
+
+```
+倍率 = 1
+     + コンボ数 × comboRate   （上限 comboBonusMax）
+     + ゲージの値 × gaugeBonusMax
+     + 撃破数 × rivalDefeatBonus
+フィーバー中は上の合計に feverMultiplier を掛ける
+最後に maxMultiplier で頭を押さえる
+```
+
+**加算で積んでから最後に掛ける**方式にしている。乗算で積むと要素が増えるたびに
+跳ね上がって調整が効かなくなるため。計算は `ScoreSettings.CalculateMultiplier()`
+の1箇所だけなので、式を変えたい場合もそこを直せばよい。
+
+初期値:
+
+| 項目 | 値 | 意味 |
+| --- | --- | --- |
+| `comboRate` | 0.02 | 100コンボで +2.0（上限に到達） |
+| `comboBonusMax` | 2.0 | コンボぶんの上限 |
+| `gaugeBonusMax` | 1.0 | ゲージ満タンで +1.0 |
+| `rivalDefeatBonus` | 0.5 | 1撃破ごとに +0.5 |
+| `feverMultiplier` | 2.0 | フィーバー中は合計を2倍 |
+| `maxMultiplier` | 10.0 | 最終的な頭打ち |
+| `rivalMaxHp` | 50 | 体力バー1本ぶん |
+| `rivalHearts` | 3 | ハートの数 |
+| `rivalDamagePerHit` | 1 | アイテム1個のダメージ |
+
+### 注意: 今の譜面ではライバルを倒せない
+
+`StageData_Normal.json` はアイテムが8個しか無く、1個1ダメージなので
+体力50のライバルは削り切れない。**撃破ボーナスは曲と譜面が揃ってから効き始める**。
+短い譜面で挙動を見たい場合は `rivalMaxHp` を一時的に下げる。
+
+### 既存 GameManager との関係
+
+`GameManager` にも score / combo / rivalHp / isBonusTime があるが、
+コンボ倍率しか無く数値がコードに直書きされている。`Game_Run` では
+`RunScore` / `RunRival` を使い、`GameManager` は置いていない。
+旧 `Game` シーンはこれまで通り `GameManager` で動く。
+
+リザルトへのスコア受け渡しは従来どおり `GameData.finalScore` 経由。
+`RunGoalWatcher` が `RunScore` から取って書き込む。
 
 ## HUD（仮）
 
