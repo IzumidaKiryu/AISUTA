@@ -20,3 +20,4 @@ MonoBehaviour:
   damagePenalty: 0.15
   feverDuration: 8
   drainDuringFever: 1
+  superFeverDuration: 12

@@ -103,9 +103,11 @@ namespace Yakiniku.Run
         {
             float gaugeValue = gauge != null ? gauge.Value : 0f;
             bool isFever = gauge != null && gauge.IsFever;
+            bool isSuperFever = gauge != null && gauge.IsSuperFever;
             int defeats = rival != null ? rival.Defeats : 0;
 
-            float next = settings.CalculateMultiplier(Combo, gaugeValue, defeats, isFever);
+            float next = settings.CalculateMultiplier(
+                Combo, gaugeValue, defeats, isFever, isSuperFever);
             if (Mathf.Approximately(next, Multiplier)) return;
 
             Multiplier = next;

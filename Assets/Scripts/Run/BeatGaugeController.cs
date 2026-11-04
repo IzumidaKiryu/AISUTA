@@ -25,6 +25,16 @@ namespace Yakiniku.Run
         public float Value => Gauge != null ? Gauge.Value : 0f;
 
         public bool IsFever { get; private set; }
+
+        /// <summary>
+        /// スーパーフィーバー中か。フィーバー中にもう一方のきっかけを満たすと昇格する。
+        /// 倍率も演出もここを見て強くする。
+        /// </summary>
+        public bool IsSuperFever { get; private set; }
+
+        /// <summary>今のフィーバーを起こしたきっかけ（複数立つとスーパーフィーバー）</summary>
+        public FeverSource Sources { get; private set; }
+
         public int Combo { get; private set; }
 
         /// <summary>コンボ数が変化したとき（演出・UI用）</summary>
@@ -33,7 +43,18 @@ namespace Yakiniku.Run
         public event Action OnFeverStart;
         public event Action OnFeverEnd;
 
+        /// <summary>スーパーフィーバーに昇格したとき。派手な演出はこれを購読する</summary>
+        public event Action OnSuperFeverStart;
+
         private float feverTimer;
+
+        /// <summary>
+        /// 見た目を整えるためにゲージを満タンにしている最中か。
+        /// フィーバー開始時にゲージを満タンにすると Gauge.OnFull が飛ぶが、
+        /// これは「ゲージが溜まって発動した」わけではないので、
+        /// スーパーフィーバーへの昇格のきっかけとして数えてはいけない。
+        /// </summary>
+        private bool isFillingForDisplay;
 
         private void Awake()
         {
@@ -108,18 +129,52 @@ namespace Yakiniku.Run
         ///
         /// フィーバーのきっかけは「ゲージ満タン」と「ハート全割り」の2つあるが、
         /// 状態の持ち主をこのクラス1つに保つため、発動はここを通す。
-        /// 既にフィーバー中なら何も起きない。
+        /// 既にフィーバー中で、きっかけが別物なら**スーパーフィーバーに昇格**する。
         /// </summary>
-        public void TriggerFever()
+        public void TriggerFever(FeverSource source = FeverSource.Rival)
         {
-            if (settings == null || settings.feverDuration <= 0f || IsFever) return;
+            if (settings == null || settings.feverDuration <= 0f) return;
+
+            if (IsFever)
+            {
+                TryPromote(source);
+                return;
+            }
 
             // 先にフィーバー状態にしてからゲージを満タンにする。
             // 逆にすると Gauge.OnFull → HandleGaugeFull が走って二重に発動してしまう
             IsFever = true;
+            Sources = source;
             feverTimer = settings.feverDuration;
-            Gauge.Fill();
+            FillForDisplay();
             OnFeverStart?.Invoke();
+        }
+
+        /// <summary>見た目のためにゲージを満タンにする（昇格のきっかけには数えない）。</summary>
+        private void FillForDisplay()
+        {
+            isFillingForDisplay = true;
+            Gauge.Fill();
+            isFillingForDisplay = false;
+        }
+
+        /// <summary>
+        /// 既にフィーバー中に、もう一方のきっかけを満たしたらスーパーフィーバーにする。
+        /// 同じきっかけが重ねて来ても昇格しない（アイテム連取で勝手に上がらないように）。
+        /// </summary>
+        private void TryPromote(FeverSource source)
+        {
+            if (IsSuperFever || Sources.HasFlag(source)) return;
+            if (settings.superFeverDuration <= 0f) return;
+
+            Sources |= source;
+            IsSuperFever = true;
+
+            // 残り時間はスーパー用の長さに置き換える（短い残りのまま昇格すると一瞬で終わる）
+            feverTimer = settings.superFeverDuration;
+            FillForDisplay();
+
+            OnSuperFeverStart?.Invoke();
         }
 
         /// <summary>外部からゲージを増減する（ライバル用のAI加算や、デバッグ、演出連動に使う）。</summary>
@@ -174,9 +229,22 @@ namespace Yakiniku.Run
 
         private void HandleGaugeFull()
         {
-            if (settings.feverDuration <= 0f || IsFever) return;
+            if (settings.feverDuration <= 0f) return;
+
+            // 演出で満タンにしただけなら、発動のきっかけとしては扱わない
+            if (isFillingForDisplay) return;
+
+            // フィーバー中にゲージが満タンになった場合は昇格を試みる。
+            // ただし TriggerFever が演出のためにゲージを満タンにした場合は
+            // Sources に既に自分の印が付いているので昇格しない
+            if (IsFever)
+            {
+                TryPromote(FeverSource.Gauge);
+                return;
+            }
 
             IsFever = true;
+            Sources = FeverSource.Gauge;
             feverTimer = settings.feverDuration;
             OnFeverStart?.Invoke();
         }
@@ -186,6 +254,8 @@ namespace Yakiniku.Run
             if (!IsFever) return;
 
             IsFever = false;
+            IsSuperFever = false;
+            Sources = FeverSource.None;
             feverTimer = 0f;
             OnFeverEnd?.Invoke();
         }

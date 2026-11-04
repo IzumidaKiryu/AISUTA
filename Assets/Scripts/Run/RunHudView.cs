@@ -37,6 +37,12 @@ namespace Yakiniku.Run
         [Header("プレイヤー")]
         [SerializeField] private TextMeshProUGUI lifeText;
 
+        [Header("フィーバー")]
+        [SerializeField] private BeatGaugeController gauge;
+
+        [Tooltip("フィーバー中だけ出す文字。通常時は非表示にする")]
+        [SerializeField] private TextMeshProUGUI feverText;
+
         [Header("見た目")]
         [Tooltip("体力バーが実際の値に追いつくまでの時間(秒)。0で即時")]
         [SerializeField, Min(0f)] private float hpSmoothTime = 0.12f;
@@ -107,6 +113,8 @@ namespace Yakiniku.Run
 
         private void Update()
         {
+            UpdateFeverText();
+
             if (rival == null || rivalHpBar == null) return;
 
             float target = rival.HpRate;
@@ -121,6 +129,37 @@ namespace Yakiniku.Run
                 rivalHpFill.color = displayedHpRate <= rivalLowThreshold
                     ? rivalBarLowColor
                     : rivalBarColor;
+            }
+        }
+
+        /// <summary>
+        /// フィーバー表示。スーパーフィーバーは虹色に回して通常と区別する。
+        /// 通常時は文字ごと消す。
+        /// </summary>
+        private void UpdateFeverText()
+        {
+            if (feverText == null || gauge == null) return;
+
+            bool show = gauge.IsFever;
+            if (feverText.gameObject.activeSelf != show)
+            {
+                feverText.gameObject.SetActive(show);
+            }
+
+            if (!show) return;
+
+            if (gauge.IsSuperFever)
+            {
+                feverText.text = "SUPER FEVER!!";
+                float hue = Mathf.Repeat(Time.time * 1.6f, 1f);
+                float pulse = 0.75f + 0.25f * Mathf.PingPong(Time.time * 12f, 1f);
+                feverText.color = Color.HSVToRGB(hue, 0.85f, 1f) * pulse;
+            }
+            else
+            {
+                feverText.text = "FEVER!";
+                float pulse = 0.7f + 0.3f * Mathf.PingPong(Time.time * 6f, 1f);
+                feverText.color = new Color(1f, 0.85f, 0.25f) * pulse;
             }
         }
 

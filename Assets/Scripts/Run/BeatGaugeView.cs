@@ -27,6 +27,13 @@ namespace Yakiniku.Run
         [Tooltip("フィーバー中の点滅の速さ")]
         [SerializeField, Min(0f)] private float feverPulseSpeed = 6f;
 
+        [Header("スーパーフィーバー")]
+        [Tooltip("色相を一周させる速さ。フィーバーの点滅と区別が付くよう虹色にする")]
+        [SerializeField, Min(0f)] private float superHueSpeed = 1.6f;
+
+        [Tooltip("明るさの脈打ちの速さ")]
+        [SerializeField, Min(0f)] private float superPulseSpeed = 12f;
+
         private float displayedValue;
         private float smoothVelocity;
 
@@ -71,7 +78,14 @@ namespace Yakiniku.Run
         {
             if (fillImage == null) return;
 
-            if (controller != null && controller.IsFever)
+            if (controller != null && controller.IsSuperFever)
+            {
+                // 虹色に回しながら明滅させる。通常フィーバーの2色往復とはっきり区別を付ける
+                float hue = Mathf.Repeat(Time.time * superHueSpeed, 1f);
+                float pulse = 0.75f + 0.25f * Mathf.PingPong(Time.time * superPulseSpeed, 1f);
+                fillImage.color = Color.HSVToRGB(hue, 0.85f, 1f) * pulse;
+            }
+            else if (controller != null && controller.IsFever)
             {
                 // 0〜1を往復させて点滅させる
                 float pulse = Mathf.PingPong(Time.time * feverPulseSpeed, 1f);

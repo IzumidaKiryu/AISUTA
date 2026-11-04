@@ -5,6 +5,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.TextCore.LowLevel;
 using UnityEngine.UI;
@@ -180,6 +181,7 @@ namespace Yakiniku.Run.EditorTools
             settings.damagePenalty = 0.15f;
             settings.feverDuration = 8f;
             settings.drainDuringFever = true;
+            settings.superFeverDuration = 12f;
 
             EditorUtility.SetDirty(settings);
             return settings;
@@ -299,6 +301,7 @@ namespace Yakiniku.Run.EditorTools
             settings.gaugeBonusMax = 1f;
             settings.rivalDefeatBonus = 0.5f;
             settings.feverMultiplier = 2f;
+            settings.superFeverMultiplier = 4f;
             settings.maxMultiplier = 10f;
             settings.rivalMaxHp = 50;
             settings.rivalHearts = 3;
@@ -735,6 +738,16 @@ namespace Yakiniku.Run.EditorTools
             volume.name = "Global Volume";
             volume.transform.position = Vector3.zero;
 
+            // フィーバー中に画面全体の Bloom を上げて派手にする
+            var feverEffect = volume.AddComponent<FeverScreenEffect>();
+            SetField(feverEffect, "gauge", gauge);
+            SetField(feverEffect, "volume", volume.GetComponent<Volume>());
+            SetField(feverEffect, "feverIntensity", 4f);
+            SetField(feverEffect, "superFeverIntensity", 9f);
+            SetField(feverEffect, "superPulseSpeed", 8f);
+            SetField(feverEffect, "superPulseAmount", 3f);
+            SetField(feverEffect, "blendSpeed", 6f);
+
             EditorSceneManager.SaveScene(scene, ScenePath);
 
             // 同名の空シーンが Assets 直下に残っていると、どちらを開くのか分からなくなる
@@ -907,7 +920,15 @@ namespace Yakiniku.Run.EditorTools
                 new Vector2(0f, 0f), new Vector2(32f, 28f), new Vector2(240f, 44f),
                 TextAlignmentOptions.BottomLeft);
 
+            // フィーバー中だけ出す。画面中央やや上に大きく
+            var feverText = CreateText(hudGo, "FeverText", "FEVER!", 56f,
+                new Vector2(0.5f, 0.5f), new Vector2(0f, 220f), new Vector2(900f, 80f),
+                TextAlignmentOptions.Center);
+            feverText.gameObject.SetActive(false);
+
             var hudView = hudGo.AddComponent<RunHudView>();
+            SetField(hudView, "gauge", controller);
+            SetField(hudView, "feverText", feverText);
             SetField(hudView, "score", score);
             SetField(hudView, "rival", rival);
             SetField(hudView, "player", player);

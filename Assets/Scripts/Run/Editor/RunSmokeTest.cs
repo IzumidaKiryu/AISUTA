@@ -461,6 +461,8 @@ namespace Yakiniku.Run.EditorTools
                 Check(gauge != null && gauge.IsFever,
                     $"ハートを全部割るとフィーバーが始まる（フィーバー={gauge?.IsFever}）");
 
+                CheckSuperFever();
+
                 // --- 倍率の計算式そのものを確かめる ---
                 var settings = UnityEditor.AssetDatabase
                     .LoadAssetAtPath<ScoreSettings>("Assets/Settings_Run/ScoreSettings.asset");
@@ -482,6 +484,44 @@ namespace Yakiniku.Run.EditorTools
                     $"ゲージ満タンで倍率が上がる（x{noDefeat:F2} → x{withGauge:F2}）");
                 Check(withFever > noDefeat,
                     $"フィーバーで倍率が上がる（x{noDefeat:F2} → x{withFever:F2}）");
+            }
+
+            /// <summary>
+            /// スーパーフィーバーへの昇格を確かめる。
+            ///
+            /// ここに来た時点で、ライバルのハート全割りによるフィーバーが掛かっている。
+            /// 同じきっかけを重ねても昇格しないこと、もう一方のきっかけで昇格することの
+            /// 両方を見る。「演出でゲージを満タンにしただけ」で勝手に昇格しないことも確認する。
+            /// </summary>
+            private void CheckSuperFever()
+            {
+                if (gauge == null)
+                {
+                    Fail("BeatGaugeController がシーンに無い");
+                    return;
+                }
+
+                Check(!gauge.IsSuperFever,
+                    $"きっかけ1つではスーパーフィーバーにならない（発動源={gauge.Sources}）");
+
+                // 同じきっかけをもう一度。これで上がってしまうと連取で暴発する
+                gauge.TriggerFever(FeverSource.Rival);
+                Check(!gauge.IsSuperFever, "同じきっかけを重ねても昇格しない");
+
+                // もう一方のきっかけ
+                gauge.TriggerFever(FeverSource.Gauge);
+                Check(gauge.IsSuperFever,
+                    $"2つのきっかけが揃うとスーパーフィーバーになる（発動源={gauge.Sources}）");
+
+                var settings = UnityEditor.AssetDatabase
+                    .LoadAssetAtPath<ScoreSettings>("Assets/Settings_Run/ScoreSettings.asset");
+                if (settings == null) return;
+
+                float fever = settings.CalculateMultiplier(0, 0f, 0, true, false);
+                float superFever = settings.CalculateMultiplier(0, 0f, 0, true, true);
+
+                Check(superFever > fever,
+                    $"スーパーフィーバーは通常より倍率が高い（x{fever:F2} → x{superFever:F2}）");
             }
 
             private void Check(bool ok, string label)

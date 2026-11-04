@@ -36,6 +36,10 @@ namespace Yakiniku.Run
         [Tooltip("フィーバー中に合計倍率へ掛ける値")]
         [Min(1f)] public float feverMultiplier = 2f;
 
+        [Tooltip("スーパーフィーバー中に合計倍率へ掛ける値。" +
+                 "ゲージ満タンとライバル全撃破が揃ったときの特別枠")]
+        [Min(1f)] public float superFeverMultiplier = 4f;
+
         [Header("上限")]
         [Tooltip("最終的な倍率の上限。表示が破綻しないように頭を押さえる")]
         [Min(1f)] public float maxMultiplier = 10f;
@@ -55,14 +59,16 @@ namespace Yakiniku.Run
         public bool rivalRespawns = true;
 
         /// <summary>現在の状態から最終的なスコア倍率を求める。</summary>
-        public float CalculateMultiplier(int combo, float gaugeValue, int rivalDefeats, bool isFever)
+        public float CalculateMultiplier(
+            int combo, float gaugeValue, int rivalDefeats, bool isFever, bool isSuperFever = false)
         {
             float multiplier = 1f;
             multiplier += Mathf.Min(combo * comboRate, comboBonusMax);
             multiplier += Mathf.Clamp01(gaugeValue) * gaugeBonusMax;
             multiplier += rivalDefeats * rivalDefeatBonus;
 
-            if (isFever) multiplier *= feverMultiplier;
+            if (isSuperFever) multiplier *= superFeverMultiplier;
+            else if (isFever) multiplier *= feverMultiplier;
 
             return Mathf.Min(multiplier, maxMultiplier);
         }

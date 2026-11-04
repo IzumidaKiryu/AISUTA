@@ -40,7 +40,9 @@
 | `ScoreSettings.cs` | スコア倍率とライバルの設定(SO)。**バランス調整は全てここ** |
 | `RunRival.cs` | ライバルの体力・ハート・撃破数 |
 | `RunScore.cs` | スコアとコンボ、倍率の合成 |
-| `RunHudView.cs` | HUDの表示（体力バー・ハート・スコア・倍率） |
+| `RunHudView.cs` | HUDの表示（体力バー・ハート・スコア・倍率・フィーバー表示） |
+| `FeverSource.cs` | フィーバーのきっかけ（ゲージ満タン／ハート全割り） |
+| `FeverScreenEffect.cs` | フィーバー中に画面全体のBloomを強める演出 |
 | `RunGameBridge.cs` | 既存 `GameManager` への繋ぎ役。Game_Run では未使用（旧シーン向けに残置） |
 | `RunGoalWatcher.cs` | ステージ終了の判定とリザルトへの遷移。**譜面基準／曲基準を切替** |
 | `PenlightStrip.cs` | 床タイルの脇に並ぶペンライト1列。タイルが回されたら撒き直す |
@@ -241,6 +243,38 @@ Gradient を **Fixed（段階）** にして **Random Color** で引けば、各
 `rivalRespawns` をオンにしてあるので、ハートを全部割ったあとライバルは復活する。
 撃破数は通算で積み上がり、そのままスコア倍率の加算要素になる。
 
+### スーパーフィーバー
+
+フィーバーのきっかけは2つある。
+
+| きっかけ | 条件 |
+| --- | --- |
+| `FeverSource.Gauge` | キラメキビートゲージが満タンになった |
+| `FeverSource.Rival` | ライバルのハートを全部割った |
+
+**フィーバー中にもう一方のきっかけを満たすとスーパーフィーバーに昇格する。**
+同じきっかけを重ねても昇格しない（アイテム連取で暴発しないように）。
+
+昇格すると、
+
+- 残り時間が `superFeverDuration`(12秒) に置き換わる
+- スコア倍率が `superFeverMultiplier`(×4.0) になる
+- ゲージが虹色に回って明滅する
+- 画面全体の Bloom が強くなって脈打つ（`FeverScreenEffect`）
+- HUDに `SUPER FEVER!!` が虹色で出る
+
+#### 実装上の注意
+
+フィーバー開始時に**見た目を整えるためゲージを満タンにしている**。
+このとき `BeatGauge.OnFull` が飛ぶが、これは「ゲージが溜まって発動した」
+わけではないので、昇格のきっかけとして数えてはいけない。
+`isFillingForDisplay` で区別している。ここを外すと、ライバル撃破で
+フィーバーに入った瞬間に勝手にスーパーフィーバーへ昇格する。
+
+`FeverScreenEffect` は `volume.profile` を使っている。
+**`sharedProfile` を実行時に書き換えるとアセットそのものが汚れて、
+エディタを止めても値が戻らない。** `profile` は実行時に複製を作る。
+
 ### 倍率の計算
 
 ```
@@ -265,6 +299,7 @@ Gradient を **Fixed（段階）** にして **Random Color** で引けば、各
 | `gaugeBonusMax` | 1.0 | ゲージ満タンで +1.0 |
 | `rivalDefeatBonus` | 0.5 | 1撃破ごとに +0.5 |
 | `feverMultiplier` | 2.0 | フィーバー中は合計を2倍 |
+| `superFeverMultiplier` | 4.0 | スーパーフィーバー中は合計を4倍 |
 | `maxMultiplier` | 10.0 | 最終的な頭打ち |
 | `rivalMaxHp` | 50 | 体力バー1本ぶん |
 | `rivalHearts` | 3 | ハートの数 |

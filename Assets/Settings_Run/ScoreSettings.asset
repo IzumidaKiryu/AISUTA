@@ -17,6 +17,7 @@ MonoBehaviour:
   gaugeBonusMax: 1
   rivalDefeatBonus: 0.5
   feverMultiplier: 2
+  superFeverMultiplier: 4
   maxMultiplier: 10
   rivalMaxHp: 50
   rivalHearts: 3

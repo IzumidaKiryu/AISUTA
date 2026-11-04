@@ -36,5 +36,10 @@ namespace Yakiniku.Run
 
         [Tooltip("フィーバー中はゲージを消費していく（残量がそのまま残り時間の表示になる）")]
         public bool drainDuringFever = true;
+
+        [Header("スーパーフィーバー")]
+        [Tooltip("フィーバー中にもう一方のきっかけ（ゲージ満タン／ライバルのハート全割り）を" +
+                 "満たしたときに昇格する。0なら昇格しない")]
+        [Min(0f)] public float superFeverDuration = 12f;
     }
 }
