@@ -6,6 +6,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.Rendering.Universal;
+using UnityEngine.TextCore.LowLevel;
 using UnityEngine.UI;
 using Yakiniku.Run.Inputs;
 using Object = UnityEngine.Object;
@@ -47,6 +48,11 @@ namespace Yakiniku.Run.EditorTools
         private const string TmpFontPath =
             "Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF.asset";
 
+        // UIに日本語を出すためのフォント。TMPの既定 LiberationSans には日本語グリフが無い
+        private const string JpFontFilePath = "Assets/Fonts/NotoSansJP-VF.ttf";
+        private const string JpFontAssetPath = "Assets/Fonts/NotoSansJP SDF.asset";
+        private const string TmpSettingsPath = "Assets/TextMesh Pro/Resources/TMP Settings.asset";
+
         private const string RunItemPath = PrefabDir + "/Run_Item.prefab";
         private const string RunObstaclePath = PrefabDir + "/Run_Obstacle.prefab";
         private const string RunJumpObstaclePath = PrefabDir + "/Run_JumpObstacle.prefab";
@@ -79,6 +85,9 @@ namespace Yakiniku.Run.EditorTools
         private const float PenlightStripWidth = 5f;
         private const int PenlightPerStrip = 450;
 
+        /// <summary>UIで使う日本語フォント。BuildAll で用意する。</summary>
+        private static TMP_FontAsset japaneseFont;
+
         [MenuItem("Yakiniku/Run/Game_Run シーンを生成", false, 10)]
         public static void BuildAll()
         {
@@ -86,15 +95,23 @@ namespace Yakiniku.Run.EditorTools
             {
                 EnsureFolders();
 
-                var runSettings = CreateRunSettings();
-                var gaugeSettings = CreateGaugeSettings();
+                // フォントを先に作る。TMP_FontAsset.CreateFontAsset はアセットデータベースを
+                // 作り直すので、先に取得しておいた参照が無効になる（= 破棄済みオブジェクト）。
+                // その状態で SerializedProperty に入れると黙って null が書き込まれる。
+                japaneseFont = CreateJapaneseFontAsset();
+                RegisterFontFallback(japaneseFont);
 
-                var runItem = BuildItemPrefab();
-                var runObstacle = BuildObstaclePrefab();
-                var runJump = BuildJumpObstaclePrefab();
-                var runPenlight = BuildPenlightPrefab();
+                CreateRunSettings();
+                CreateGaugeSettings();
 
-                BuildScene(runSettings, gaugeSettings, runItem, runObstacle, runJump, runPenlight);
+                BuildItemPrefab();
+                BuildObstaclePrefab();
+                BuildJumpObstaclePrefab();
+                BuildPenlightPrefab();
+
+                AssetDatabase.SaveAssets();
+
+                BuildScene();
                 RegisterSceneInBuildSettings();
 
                 AssetDatabase.SaveAssets();
@@ -164,6 +181,111 @@ namespace Yakiniku.Run.EditorTools
 
             EditorUtility.SetDirty(settings);
             return settings;
+        }
+
+        /// <summary>
+        /// 日本語を表示できる TMP Font Asset を作る。
+        ///
+        /// 日本語は常用漢字だけでも数千字あるので、全字をアトラスに焼くと巨大になる。
+        /// Atlas Population Mode を Dynamic にして、実際に表示された字だけを
+        /// 実行時にアトラスへ足していく方式にしている。
+        ///
+        /// フォントは Noto Sans JP（SIL Open Font License 1.1）。
+        /// Meiryo や Yu Gothic はビルドに同梱できないライセンスなので使わないこと。
+        /// </summary>
+        private static TMP_FontAsset CreateJapaneseFontAsset()
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(JpFontAssetPath);
+            if (existing != null) return existing;
+
+            var source = AssetDatabase.LoadAssetAtPath<Font>(JpFontFilePath);
+            if (source == null)
+            {
+                Debug.LogWarning($"[RunSceneBuilder] 日本語フォントが見つかりません: {JpFontFilePath}");
+                return null;
+            }
+
+            var asset = TMP_FontAsset.CreateFontAsset(
+                source,
+                samplingPointSize: 90,
+                atlasPadding: 9,
+                renderMode: GlyphRenderMode.SDFAA,
+                atlasWidth: 1024,
+                atlasHeight: 1024,
+                atlasPopulationMode: AtlasPopulationMode.Dynamic,
+                enableMultiAtlasSupport: true);
+
+            if (asset == null) throw new Exception("TMP Font Asset を作成できません");
+
+            asset.name = "NotoSansJP SDF";
+            AssetDatabase.CreateAsset(asset, JpFontAssetPath);
+
+            // アトラステクスチャとマテリアルはサブアセットとして一緒に保存する。
+            // ここを省くと参照切れのフォントアセットが出来上がる
+            if (asset.atlasTextures != null && asset.atlasTextures.Length > 0
+                && asset.atlasTextures[0] != null)
+            {
+                asset.atlasTextures[0].name = asset.name + " Atlas";
+                AssetDatabase.AddObjectToAsset(asset.atlasTextures[0], asset);
+            }
+
+            if (asset.material != null)
+            {
+                asset.material.name = asset.name + " Material";
+                AssetDatabase.AddObjectToAsset(asset.material, asset);
+            }
+
+            EditorUtility.SetDirty(asset);
+            AssetDatabase.SaveAssets();
+
+            Debug.Log("[RunSceneBuilder] 日本語フォントアセットを作成: " + JpFontAssetPath);
+            return asset;
+        }
+
+        /// <summary>
+        /// TMP の既定フォールバックに日本語フォントを登録する。
+        /// こうしておくと、既存のテキスト（Title / Select / Result など他メンバーが作った分も含む）
+        /// が LiberationSans のままでも、日本語の字だけ自動でこちらから引かれる。
+        /// テキストを1つずつ差し替える必要がなくなる。
+        /// </summary>
+        private static void RegisterFontFallback(TMP_FontAsset font)
+        {
+            if (font == null) return;
+
+            var settings = AssetDatabase.LoadAssetAtPath<ScriptableObject>(TmpSettingsPath);
+            if (settings == null)
+            {
+                Debug.LogWarning("[RunSceneBuilder] TMP Settings が見つかりません: " + TmpSettingsPath);
+                return;
+            }
+
+            var so = new SerializedObject(settings);
+            var list = so.FindProperty("m_fallbackFontAssets");
+            if (list == null)
+            {
+                Debug.LogWarning("[RunSceneBuilder] TMP Settings のフォールバック欄が見つかりません");
+                return;
+            }
+
+            for (int i = 0; i < list.arraySize; i++)
+            {
+                if (list.GetArrayElementAtIndex(i).objectReferenceValue == font) return; // 登録済み
+            }
+
+            list.arraySize++;
+            list.GetArrayElementAtIndex(list.arraySize - 1).objectReferenceValue = font;
+            so.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(settings);
+
+            Debug.Log("[RunSceneBuilder] TMP のフォールバックに日本語フォントを登録しました");
+        }
+
+        /// <summary>パスからアセットを取り直す。見つからなければ例外。</summary>
+        private static T Reload<T>(string path) where T : Object
+        {
+            var asset = AssetDatabase.LoadAssetAtPath<T>(path);
+            if (asset == null) throw new Exception($"アセットを読み込めません: {path}");
+            return asset;
         }
 
         private static T LoadOrCreate<T>(string path) where T : ScriptableObject
@@ -432,15 +554,23 @@ namespace Yakiniku.Run.EditorTools
         // シーン
         // =====================================================================
 
-        private static void BuildScene(
-            RunSettings runSettings,
-            GaugeSettings gaugeSettings,
-            GameObject itemPrefab,
-            GameObject obstaclePrefab,
-            GameObject jumpObstaclePrefab,
-            GameObject penlightPrefab)
+        private static void BuildScene()
         {
             var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+
+            // 【アセットの取得はシーンを作った後に行うこと】
+            // NewScene はシーン切り替えの際に、どこからも参照されていないアセットを
+            // メモリから破棄する。先に読んでおいたローカル変数は破棄済みオブジェクトになり、
+            // SerializedProperty に入れても null が書き込まれる
+            // （「シーンは出来たのに参照だけ空」という壊れ方をする）。
+            var runSettings = Reload<RunSettings>(RunSettingsPath);
+            var gaugeSettings = Reload<GaugeSettings>(GaugeSettingsPath);
+            var itemPrefab = Reload<GameObject>(RunItemPath);
+            var obstaclePrefab = Reload<GameObject>(RunObstaclePath);
+            var jumpObstaclePrefab = Reload<GameObject>(RunJumpObstaclePath);
+            var penlightPrefab = Reload<GameObject>(RunPenlightPath);
+
+            japaneseFont = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(JpFontAssetPath);
 
             // --- プレイヤー ---
             var player = new GameObject("Player");
@@ -698,11 +828,8 @@ namespace Yakiniku.Run.EditorTools
             SetField(view, "feverColor", new Color(1f, 0.85f, 0.25f));
             SetField(view, "feverPulseSpeed", 6f);
 
-            // ここから下は全て仮の見た目。
-            // 文字列を日本語にすると豆腐(□)になる。TMPの既定フォント
-            // LiberationSans SDF に日本語グリフが無いため。日本語を出したい場合は
-            // 日本語フォントから TMP Font Asset を作って差し替えること
-            CreateText(hudGo, "GaugeLabel", "KIRAMEKI BEAT", 24f,
+            // ここから下は全て仮の見た目
+            CreateText(hudGo, "GaugeLabel", "キラメキビート", 24f,
                 new Vector2(0.5f, 1f), new Vector2(0f, -24f), new Vector2(760f, 30f),
                 TextAlignmentOptions.Center);
 
@@ -748,7 +875,9 @@ namespace Yakiniku.Run.EditorTools
             label.color = Color.white;
             label.raycastTarget = false;
 
-            var font = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(TmpFontPath);
+            // 日本語フォントを優先して割り当てる。無ければ既定（英数字のみ）に落とす
+            var font = japaneseFont
+                       ?? AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(TmpFontPath);
             if (font != null) label.font = font;
 
             return label;
@@ -853,6 +982,16 @@ namespace Yakiniku.Run.EditorTools
             switch (prop.propertyType)
             {
                 case SerializedPropertyType.ObjectReference:
+                    // 破棄済みのオブジェクトを渡すと黙って null が書き込まれ、
+                    // 「シーンは出来たのに参照が空」という分かりにくい壊れ方をする。
+                    // 意図的に空にしたい場合だけ null リテラルを渡すこと
+                    if (value != null && (Object)value == null)
+                    {
+                        throw new Exception(
+                            $"{target.GetType().Name}.{field} に渡された参照が無効です。"
+                            + "アセットを作り直した後は、パスから取り直してから渡すこと");
+                    }
+
                     prop.objectReferenceValue = (Object)value;
                     break;
                 case SerializedPropertyType.Float:
