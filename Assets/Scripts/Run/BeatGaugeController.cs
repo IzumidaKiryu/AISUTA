@@ -56,6 +56,16 @@ namespace Yakiniku.Run
         /// </summary>
         private bool isFillingForDisplay;
 
+        /// <summary>
+        /// フィーバー中に溜めたぶん。
+        ///
+        /// フィーバー中はゲージの値が「残り時間」の表示に変わるので、通常の加算は止まる。
+        /// そのままだと「ゲージ満タン」というきっかけがフィーバー中に成立せず、
+        /// スーパーフィーバーへの昇格がライバル側からの一方通行になってしまう。
+        /// 裏で溜め続けて、1周ぶん溜まったらゲージ側のきっかけが揃ったものとして扱う。
+        /// </summary>
+        private float pendingGain;
+
         private void Awake()
         {
             Gauge = new BeatGauge();
@@ -211,10 +221,22 @@ namespace Yakiniku.Run
         {
             AddCombo();
 
-            if (IsFever) return;
-
             float gain = item != null && item.GaugeGain > 0f ? item.GaugeGain : settings.gainPerItem;
             float multiplier = Mathf.Min(1f + Combo * settings.comboGainRate, settings.maxComboMultiplier);
+
+            if (IsFever)
+            {
+                // フィーバー中もゲージは裏で溜め続ける。1周ぶん溜まったら
+                // 「ゲージ満タン」のきっかけが揃ったものとして昇格を試みる
+                pendingGain += gain * multiplier;
+                if (pendingGain >= 1f)
+                {
+                    pendingGain = 0f;
+                    TryPromote(FeverSource.Gauge);
+                }
+
+                return;
+            }
 
             Gauge.Add(gain * multiplier);
         }
@@ -257,6 +279,7 @@ namespace Yakiniku.Run
             IsSuperFever = false;
             Sources = FeverSource.None;
             feverTimer = 0f;
+            pendingGain = 0f;
             OnFeverEnd?.Invoke();
         }
     }
