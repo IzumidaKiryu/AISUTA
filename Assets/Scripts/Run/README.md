@@ -48,6 +48,7 @@
 | `PenlightStrip.cs` | 床タイルの脇に並ぶペンライト1列。タイルが回されたら撒き直す |
 | `Editor/RunSceneBuilder.cs` | シーン・設定アセット・プレハブの自動生成 |
 | `Editor/ChartGenerator.cs` | 譜面JSONの自動生成（Easy / Normal / Hard） |
+| `Editor/RunScreenshot.cs` | 通常／フィーバー／スーパーフィーバーの画面を撮る |
 | `Editor/RunSmokeTest.cs` | 自動プレイで動作確認チェックリストを検証 |
 | `Editor/PlayFromTitle.cs` | どのシーンを開いていてもPlayでタイトルから始める |
 
@@ -194,12 +195,52 @@ BGM は `BGM` オブジェクトの `AudioSource` が持ち、`GoalWatcher` が�
 見た目のプレハブ（`Assets/Particle System.prefab`）は**書き換えていない**。
 子として抱えて、並べ方だけ上書きしている。
 
-### Bloom が無いと光らない
+### Bloom の設定
 
-`Game_Run` には `Global Volume`（プロファイルは `Global Volume Profile 1`、Bloom の
-threshold 0.2 / intensity 2）を置き、**カメラの `Render Post Processing` をONにしてある**。
+`Game_Run` には `Global Volume` を置き、**カメラの `Render Post Processing` をONにしてある**。
 Volume を置いてもカメラ側がOFFだと Bloom は一切効かず、ペンライトは
 ただの明るいベタ塗り＝白い棒になる。どちらか片方でも欠けると白くなるので注意。
+
+プロファイルは `Settings_Run/GameRunVolume.asset`（ビルダーが生成）。
+既存の `Global Volume Profile 1` は Title や旧 Game でも使われているので、
+そちらを書き換えずに済むよう別アセットにしてある。
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| `threshold` | 1.0 | **ここが最重要。** 元は 0.2 で、輝度0.2を超えるもの（床・空・キャラ）が全部光り、画面全体が白く飛んで何も見えなかった |
+| `intensity` | 4.0 | 閾値1.0のおかげで光るのはペンライトだけなので、大きめに振れる |
+| `scatter` | 0.6 | にじみを少し締める。大きいと光が広がって背景を覆う |
+| `clamp` | 30 | 極端に明るい点が画面を覆い尽くさないように |
+
+#### 閾値は「最大チャンネル」ではなく輝度で判定される
+
+```
+輝度 = 0.2126 R + 0.7152 G + 0.0722 B
+```
+
+緑の重みが圧倒的に大きいので、各成分を同じ値にしても色によって光り方が変わる。
+実際、ペンライトの5色を同じ数値で揃えたときは**ピンク(輝度0.82)と紫(0.69)が
+閾値1.0に届かず、2色だけ光らなかった**。
+
+そのため `RunSceneBuilder.ScaleToLuminance()` で輝度を揃えてから渡している。
+色を変えるときも、**彩度のある色を決めてから輝度を揃える**こと。
+
+#### 明るさではなく色味で差を付ける
+
+フィーバーの派手さを `intensity` だけで出そうとすると、上げた瞬間に画面が白飛びして
+譜面が見えなくなる（最初は通常1→フィーバー4→スーパー9にしていて、
+スーパーフィーバーは画面がほぼ真っ白だった）。
+
+今は `FeverScreenEffect` が **Bloom の `tint`（光の色）** も動かしている。
+スーパーフィーバーでは色相を一周させるので、明るさを据え置いたまま見た目が変わる。
+
+#### 見た目を変えたら必ず絵で確認する
+
+数値だけで判断すると外す。`Yakiniku > Run > 画面を撮る` で
+通常／フィーバー／スーパーフィーバーの3枚を撮って並べて比べる。
+
+なおこの撮影は **Screen Space - Overlay の Canvas は写らない**（HUDは確認できない）。
+Overlay のUIはそもそもポストプロセスの影響を受けないので、Bloomを見るぶんには問題ない。
 
 ### 発光について
 

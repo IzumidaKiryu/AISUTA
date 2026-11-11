@@ -36,6 +36,7 @@ namespace Yakiniku.Run.EditorTools
         private const string RunSettingsPath = SettingsDir + "/RunSettings.asset";
         private const string GaugeSettingsPath = SettingsDir + "/GaugeSettings.asset";
         private const string ScoreSettingsPath = SettingsDir + "/ScoreSettings.asset";
+        private const string VolumeProfilePath = SettingsDir + "/GameRunVolume.asset";
 
         // 既存アセット（他メンバー作成。中身は変更せず、子として取り込むだけ）
         private const string ArtFloor = "Assets/Stage_Fixed.prefab";
@@ -87,6 +88,12 @@ namespace Yakiniku.Run.EditorTools
         private const float PenlightStripWidth = 5f;
         private const int PenlightPerStrip = 450;
 
+        /// <summary>
+        /// ペンライトの輝度。Bloom の threshold(1.0) を超えないと光らないので、
+        /// 少し上に置く。上げすぎると芯が白く飛んで色が分からなくなる。
+        /// </summary>
+        private const float PenlightLuminance = 2.0f;
+
         /// <summary>UIで使う日本語フォント。BuildAll で用意する。</summary>
         private static TMP_FontAsset japaneseFont;
 
@@ -106,6 +113,7 @@ namespace Yakiniku.Run.EditorTools
                 CreateRunSettings();
                 CreateGaugeSettings();
                 CreateScoreSettings();
+                CreateVolumeProfile();
 
                 BuildItemPrefab();
                 BuildObstaclePrefab();
@@ -312,6 +320,52 @@ namespace Yakiniku.Run.EditorTools
             return settings;
         }
 
+        /// <summary>
+        /// Game_Run 専用の Volume Profile を作る。
+        ///
+        /// 既存の `Global Volume Profile 1` は Bloom の threshold が 0.2 で、
+        /// 輝度0.2を超えるもの（床・空・キャラ）が全部光ってしまい、
+        /// 画面全体が白く飛んで何も見えなくなる。
+        ///
+        /// ペンライトはHDR(1.9前後)で描いているので、threshold を 1.0 付近にすれば
+        /// **ペンライトだけが光り、通常の物体は光らない**。これが狙い。
+        /// 共有プロファイルを書き換えると Title や旧 Game の見た目も変わるので、
+        /// こちらは別アセットにしてある。
+        /// </summary>
+        private static VolumeProfile CreateVolumeProfile()
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<VolumeProfile>(VolumeProfilePath);
+            if (existing != null) return existing;
+
+            var profile = ScriptableObject.CreateInstance<VolumeProfile>();
+            profile.name = "GameRunVolume";
+            AssetDatabase.CreateAsset(profile, VolumeProfilePath);
+
+            var bloom = profile.Add<Bloom>(true);
+            bloom.name = "Bloom";
+
+            // 1.0 未満の明るさ（＝普通の物体）は光らせない
+            bloom.threshold.Override(1.0f);
+
+            // 閾値1.0のおかげで床や空は一切光らない。つまり強度を上げても
+            // にじむのはペンライトだけなので、大きめに振れる。
+            // （閾値0.2のときに強度9まで上げたら画面全体が白飛びした）
+            bloom.intensity.Override(4f);
+
+            // にじみを少し締める。大きいと光が広がって背景を覆う
+            bloom.scatter.Override(0.6f);
+
+            // 極端に明るい点が画面を覆い尽くさないように頭を押さえる
+            bloom.clamp.Override(30f);
+
+            AssetDatabase.AddObjectToAsset(bloom, profile);
+            EditorUtility.SetDirty(profile);
+            AssetDatabase.SaveAssets();
+
+            Debug.Log("[RunSceneBuilder] Volume Profile を作成: " + VolumeProfilePath);
+            return profile;
+        }
+
         private static T LoadOrCreate<T>(string path) where T : ScriptableObject
         {
             var existing = AssetDatabase.LoadAssetAtPath<T>(path);
@@ -487,14 +541,28 @@ namespace Yakiniku.Run.EditorTools
         /// </summary>
         private static ParticleSystem.MinMaxGradient CreatePenlightColors()
         {
-            var colors = new[]
+            // 彩度のある色を、輝度を揃えてHDRに持ち上げる。
+            //
+            // 【Bloomの閾値は最大チャンネルではなく「輝度」で判定される】
+            // 輝度 = 0.2126R + 0.7152G + 0.0722B で、緑の重みが圧倒的に大きい。
+            // そのため同じ「2.8」でも、緑を含む色は光り、ピンクや紫は光らない。
+            // 実際、各成分を揃えただけの指定ではピンク(輝度0.82)と紫(0.69)が
+            // 閾値1.0に届かず、5色中2色が光らなかった。
+            // ここで輝度を揃えておけば、どの色も同じように光る。
+            var baseColors = new[]
             {
-                new Color(1.9f, 0.15f, 0.75f), // ピンク
-                new Color(0.15f, 1.2f, 1.9f),  // 水色
-                new Color(0.55f, 1.9f, 0.3f),  // 黄緑
-                new Color(1.9f, 0.9f, 0.15f),  // 橙
-                new Color(0.9f, 0.25f, 1.9f),  // 紫
+                new Color(1.00f, 0.07f, 0.40f), // ピンク
+                new Color(0.07f, 0.60f, 1.00f), // 水色
+                new Color(0.25f, 1.00f, 0.15f), // 黄緑
+                new Color(1.00f, 0.45f, 0.07f), // 橙
+                new Color(0.45f, 0.10f, 1.00f), // 紫
             };
+
+            var colors = new Color[baseColors.Length];
+            for (int i = 0; i < baseColors.Length; i++)
+            {
+                colors[i] = ScaleToLuminance(baseColors[i], PenlightLuminance);
+            }
 
             var keys = new GradientColorKey[colors.Length];
             for (int i = 0; i < colors.Length; i++)
@@ -738,14 +806,24 @@ namespace Yakiniku.Run.EditorTools
             volume.name = "Global Volume";
             volume.transform.position = Vector3.zero;
 
+            // 共有のプロファイル(Global Volume Profile 1)は Title や旧 Game でも使われている。
+            // そちらの見た目を変えずに調整したいので、Game_Run 専用のものに差し替える
+            var volumeComponent = volume.GetComponent<Volume>();
+            if (volumeComponent != null)
+            {
+                volumeComponent.sharedProfile = Reload<VolumeProfile>(VolumeProfilePath);
+            }
+
             // フィーバー中に画面全体の Bloom を上げて派手にする
             var feverEffect = volume.AddComponent<FeverScreenEffect>();
             SetField(feverEffect, "gauge", gauge);
             SetField(feverEffect, "volume", volume.GetComponent<Volume>());
-            SetField(feverEffect, "feverIntensity", 4f);
-            SetField(feverEffect, "superFeverIntensity", 9f);
+            // 上げすぎると画面が白飛びして譜面が見えなくなる。
+            // 通常1.0に対して、フィーバーで2倍、スーパーで3.5倍くらいが限度
+            SetField(feverEffect, "feverIntensity", 7f);
+            SetField(feverEffect, "superFeverIntensity", 10f);
             SetField(feverEffect, "superPulseSpeed", 8f);
-            SetField(feverEffect, "superPulseAmount", 3f);
+            SetField(feverEffect, "superPulseAmount", 2f);
             SetField(feverEffect, "blendSpeed", 6f);
 
             EditorSceneManager.SaveScene(scene, ScenePath);
@@ -985,6 +1063,19 @@ namespace Yakiniku.Run.EditorTools
                 dropdown = Builtin("UI/Skin/DropdownArrow.psd"),
                 mask = Builtin("UI/Skin/UIMask.psd"),
             };
+        }
+
+        /// <summary>
+        /// 色相はそのままに、輝度が指定値になるよう明るさを揃える。
+        /// Bloom は輝度で判定するので、色ごとの光り方を揃えるにはここを合わせる必要がある。
+        /// </summary>
+        private static Color ScaleToLuminance(Color color, float targetLuminance)
+        {
+            float luminance = 0.2126f * color.r + 0.7152f * color.g + 0.0722f * color.b;
+            if (luminance <= 0.0001f) return color;
+
+            float scale = targetLuminance / luminance;
+            return new Color(color.r * scale, color.g * scale, color.b * scale, color.a);
         }
 
         private static Sprite Builtin(string path)

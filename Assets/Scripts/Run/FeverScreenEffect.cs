@@ -39,9 +39,19 @@ namespace Yakiniku.Run
         [Tooltip("強さが変わるときの追従の速さ。小さいほどゆっくり")]
         [SerializeField, Min(0.01f)] private float blendSpeed = 6f;
 
+        [Header("色味")]
+        [Tooltip("フィーバー中に光へ乗せる色")]
+        [SerializeField] private Color feverTint = new Color(1f, 0.85f, 0.6f);
+
+        [Tooltip("スーパーフィーバー中に色相を一周させる速さ。" +
+                 "明るさを上げずに派手さを出すための演出")]
+        [SerializeField, Min(0f)] private float superTintHueSpeed = 1.2f;
+
         private Bloom bloom;
         private float baseIntensity;
+        private Color baseTint = Color.white;
         private float current;
+        private Color currentTint = Color.white;
 
         private void Start()
         {
@@ -61,7 +71,9 @@ namespace Yakiniku.Run
             }
 
             baseIntensity = normalIntensity > 0f ? normalIntensity : bloom.intensity.value;
+            baseTint = bloom.tint.value;
             current = baseIntensity;
+            currentTint = baseTint;
         }
 
         private void Update()
@@ -69,19 +81,29 @@ namespace Yakiniku.Run
             if (bloom == null) return;
 
             float target = baseIntensity;
+            Color targetTint = baseTint;
 
             if (gauge != null && gauge.IsSuperFever)
             {
                 float pulse = Mathf.PingPong(Time.time * superPulseSpeed, 1f);
                 target = superFeverIntensity + pulse * superPulseAmount;
+
+                // 明るさを上げると画面が白飛びして譜面が見えなくなる。
+                // 色相を回すことで、明るさを据え置いたまま派手さを出す
+                targetTint = Color.HSVToRGB(Mathf.Repeat(Time.time * superTintHueSpeed, 1f), 0.7f, 1f);
             }
             else if (gauge != null && gauge.IsFever)
             {
                 target = feverIntensity;
+                targetTint = feverTint;
             }
 
-            current = Mathf.Lerp(current, target, 1f - Mathf.Exp(-blendSpeed * Time.deltaTime));
+            float t = 1f - Mathf.Exp(-blendSpeed * Time.deltaTime);
+            current = Mathf.Lerp(current, target, t);
+            currentTint = Color.Lerp(currentTint, targetTint, t);
+
             bloom.intensity.Override(current);
+            bloom.tint.Override(currentTint);
         }
     }
 }
