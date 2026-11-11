@@ -38,8 +38,13 @@ namespace Yakiniku.Run
         public bool drainDuringFever = true;
 
         [Header("スーパーフィーバー")]
-        [Tooltip("フィーバー中にもう一方のきっかけ（ゲージ満タン／ライバルのハート全割り）を" +
-                 "満たしたときに昇格する。0なら昇格しない")]
+        [Tooltip("ENCORE 中にフィーバーが重なったときの継続時間(秒)。" +
+                 "ENCORE 中にゲージを溜め切るか、フィーバー中にライバルを撃破すると入る")]
         [Min(0f)] public float superFeverDuration = 12f;
+
+        [Header("譜面に合わせた自動調整")]
+        [Tooltip("フルコンボしたときに1曲で何回フィーバーに入るか。" +
+                 "RunBalance がこの回数になるよう gainPerItem を譜面ごとに決め直す")]
+        [Min(1)] public int feversPerSong = 3;
     }
 }

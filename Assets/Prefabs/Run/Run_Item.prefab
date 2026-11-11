@@ -67,7 +67,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 3e820e81aaa117e45beb5417e90e611e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Yakiniku.Run.BeatItem
-  gaugeGain: 0.06
+  gaugeGain: 0
   score: 10
 --- !u!1001 &5515196156664473431
 PrefabInstance:

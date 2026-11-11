@@ -52,6 +52,13 @@ namespace Yakiniku.Run
         [Tooltip("両サイドの物を置くY座標(ワールド)")]
         [SerializeField] private float sidePropY;
 
+        [Header("床の中央に重ねる物")]
+        [Tooltip("タイル1枚につき中央に1つ生成するプレハブ。レーンの路面と境界線など")]
+        [SerializeField] private GameObject[] centerProps;
+
+        [Tooltip("中央の物を置くY座標(ワールド)。床の上面より少し上にしないとちらつく")]
+        [SerializeField] private float centerPropY;
+
         private readonly List<Transform> tiles = new List<Transform>();
 
         /// <summary>タイルの「手前の端」から原点までの距離。中心原点なら半分ずれる。</summary>
@@ -108,9 +115,21 @@ namespace Yakiniku.Run
             nextTileStartZ += tileLength;
         }
 
-        /// <summary>タイルの左右に装飾を付ける。タイルの子にするので、以後は床と一緒に動く。</summary>
+        /// <summary>タイルの左右と中央に装飾を付ける。タイルの子にするので、以後は床と一緒に動く。</summary>
         private void AttachSideProps(Transform tile)
         {
+            if (centerProps != null)
+            {
+                foreach (var prop in centerProps)
+                {
+                    if (prop == null) continue;
+
+                    var instance = Instantiate(prop, tile);
+                    instance.transform.localPosition = new Vector3(0f, centerPropY - tile.position.y, 0f);
+                    instance.transform.localRotation = prop.transform.rotation;
+                }
+            }
+
             if (sideProps == null) return;
 
             foreach (var prop in sideProps)

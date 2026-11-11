@@ -16,10 +16,10 @@ MonoBehaviour:
   comboBonusMax: 2
   gaugeBonusMax: 1
   rivalDefeatBonus: 0.5
-  feverMultiplier: 2
+  feverMultiplier: 1.5
+  encoreMultiplier: 2
   superFeverMultiplier: 4
   maxMultiplier: 10
+  rivalHearts: 5
   rivalMaxHp: 50
-  rivalHearts: 3
   rivalDamagePerHit: 1
-  rivalRespawns: 1

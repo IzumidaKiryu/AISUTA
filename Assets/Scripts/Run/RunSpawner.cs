@@ -74,6 +74,9 @@ namespace Yakiniku.Run
         /// <summary>譜面の最後のノーツのZ座標。ここを通過したらステージの終わり。</summary>
         public float LastNoteZ { get; private set; }
 
+        /// <summary>取れるノーツ（Item）の総数。バランス調整とリザルトで使う</summary>
+        public int ItemCount { get; private set; }
+
         private void Awake()
         {
             if (settings == null)
@@ -86,9 +89,13 @@ namespace Yakiniku.Run
             if (noteProvider == null) noteProvider = GetComponent<NoteProviderBehaviour>();
 
             BuildPools();
+
+            // 譜面は Awake で読む。RunBalance などが Start でノーツ数を参照するので、
+            // Start 同士だと実行順によっては読む前に参照されてしまう
+            LoadNotes();
         }
 
-        private void Start()
+        private void LoadNotes()
         {
             var source = noteProvider != null ? noteProvider.GetNotes() : null;
             notes = source != null ? new List<NoteData>(source) : new List<NoteData>();
@@ -98,6 +105,13 @@ namespace Yakiniku.Run
             cursor = 0;
 
             LastNoteZ = notes.Count > 0 ? notes[notes.Count - 1].spawnZ : 0f;
+
+            ItemCount = 0;
+            foreach (var note in notes)
+            {
+                if (note.type == "Item") ItemCount++;
+            }
+
             IsReady = true;
         }
 

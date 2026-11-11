@@ -1,565 +1,383 @@
-# ランゲーム基盤（メンバーA担当）
+# ランゲーム（Game_Run）
 
-`Assets/Scripts/Run/` 以下がランゲームの基盤。既存の `PlayerController` / `StageManager` は
-壊さずそのまま残してあるので、動作比較しながら移行できる。
-
-## 全体構成
+本家「アイ☆スタ IDOL STARS」のアイドルバトルに寄せたランゲーム。
+`Assets/Scripts/Run/` 以下が本体で、シーン・設定・プレハブは全てコードから生成する。
 
 ```
-[入力層]      IRunInputSource  ← Keyboard / DebugButton / Swipe(C担当) / コメント
-                  ↓ RunInputAction
-[ロジック層]  PlayerRunner ・ RunSpawner ・ BeatGauge
-                  ↓ C# event
-[表示層]      BeatGaugeView(Slider) ・ 演出(B担当) ・ RunGameBridge → GameManager
-[設定]        RunSettings / GaugeSettings (ScriptableObject) ← 数値は全部ここ
+Title → Select（難易度選択） → Game_Run → Result
+                ↑                            │
+                └──── ステージ選択 ←─── 次へ ─┤
+                       もう一度 ──────────────┘
 ```
 
-層をまたぐ依存は全てインターフェースか event 経由。担当者が別ファイルを触るので
-コンフリクトしにくく、片方が未完成でも自分の作業を進められる。
-
-## ファイル一覧
-
-| ファイル | 役割 |
-| --- | --- |
-| `RunSettings.cs` | レーン数・速度・ジャンプ等の数値設定(SO)。**レーン↔X座標の変換もここが唯一の定義** |
-| `Inputs/IRunInputSource.cs` | 操作の入力元インターフェース + `RunInputAction` |
-| `Inputs/RunInputSourceBehaviour.cs` | 入力元の基底クラス。バッファリングを共通化 |
-| `Inputs/KeyboardRunInput.cs` | 開発用キーボード入力（矢印 / WASD / Space） |
-| `Inputs/DebugButtonRunInput.cs` | uGUIボタンからの入力（実機手動確認用） |
-| `PlayerRunner.cs` | 自動前進・レーン切替・ジャンプ・被弾処理 |
-| `IPlayerTouchable.cs` | 「プレイヤーが触れたら何かが起きる物」のインターフェース |
-| `Obstacle.cs` / `BeatItem.cs` | 障害物 / ゲージが溜まるアイテム |
-| `INoteProvider.cs` / `JsonNoteProvider.cs` | 配置データの供給元。既存の譜面JSONをそのまま使える |
-| `RunSpawner.cs` | 先読み生成 + オブジェクトプールによる障害物生成 |
-| `SpawnedNote.cs` | プール返却用の目印 |
-| `GroundTiler.cs` | 床タイルの無限ループ（既存 StageManager の床処理を分離したもの） |
-| `BeatGauge.cs` | キラメキビートゲージの値本体（純C#・テスト可能） |
-| `GaugeSettings.cs` | ゲージの増減ルール(SO) |
-| `BeatGaugeController.cs` | ルールを実行してゲージを増減させる。フィーバー管理 |
-| `BeatGaugeView.cs` | Slider への表示 |
-| `ScoreSettings.cs` | スコア倍率とライバルの設定(SO)。**バランス調整は全てここ** |
-| `RunRival.cs` | ライバルの体力・ハート・撃破数 |
-| `RunScore.cs` | スコアとコンボ、倍率の合成 |
-| `RunHudView.cs` | HUDの表示（体力バー・ハート・スコア・倍率・フィーバー表示） |
-| `FeverSource.cs` | フィーバーのきっかけ（ゲージ満タン／ハート全割り） |
-| `FeverScreenEffect.cs` | フィーバー中に画面全体のBloomを強める演出 |
-| `RunGameBridge.cs` | 既存 `GameManager` への繋ぎ役。Game_Run では未使用（旧シーン向けに残置） |
-| `RunGoalWatcher.cs` | ステージ終了の判定とリザルトへの遷移。**譜面基準／曲基準を切替** |
-| `PenlightStrip.cs` | 床タイルの脇に並ぶペンライト1列。タイルが回されたら撒き直す |
-| `Editor/RunSceneBuilder.cs` | シーン・設定アセット・プレハブの自動生成 |
-| `Editor/ChartGenerator.cs` | 譜面JSONの自動生成（Easy / Normal / Hard） |
-| `Editor/RunSmokeTest.cs` | 自動プレイで動作確認チェックリストを検証 |
-| `Editor/PlayFromTitle.cs` | どのシーンを開いていてもPlayでタイトルから始める |
+遷移のたびに ☆ を円形に並べたローディングが挟まる（本家と同じ）。
 
 ---
 
-# 動作確認用シーンの作り方
-
-**手作業は不要。** Unityのメニューから
+# まず動かす
 
 ```
-Yakiniku > Run > Game_Run シーンを生成
+Yakiniku > Run > 全部生成
 ```
 
-を実行すると、`Assets/Scenes/Game_Run.unity` が設定済みの状態で生成される。
-中身は `Assets/Scripts/Run/Editor/RunSceneBuilder.cs` にコードとして書いてあるので、
-シーンを壊してしまっても同じメニューを押せば作り直せる（何度実行してもよい）。
+で Game_Run / Select / Result の3シーンと、設定アセット・プレハブ・材質が全部できる。
+**何度実行してもよい**（壊したときもこれで元に戻る）。
 
-コマンドラインから実行する場合（Unityを閉じた状態で）:
-
-```
-Unity.exe -batchmode -quit -projectPath <プロジェクトのパス> -executeMethod Yakiniku.Run.EditorTools.RunSceneBuilder.BuildAll
-```
-
-## 生成されるもの
-
-| パス | 中身 |
+| メニュー | 内容 |
 | --- | --- |
-| `Assets/Settings_Run/RunSettings.asset` | レーン・速度・ジャンプの数値設定 |
-| `Assets/Settings_Run/GaugeSettings.asset` | ゲージの増減ルール |
-| `Assets/Prefabs/Run/Run_Item.prefab` | 既存 `Item.prefab` + 当たり判定 + `BeatItem` |
-| `Assets/Prefabs/Run/Run_Obstacle.prefab` | 既存 `Obstacle.prefab` + 当たり判定 + `Obstacle` |
-| `Assets/Prefabs/Run/Run_JumpObstacle.prefab` | 既存 `JumpObstacle.prefab` + 当たり判定 + `Obstacle` |
-| `Assets/Scenes/Game_Run.unity` | 下記のHierarchyが組まれたシーン |
+| `Yakiniku > Run > 全部生成` | 3シーンと共通アセットをまとめて生成 |
+| `Yakiniku > Run > 譜面を生成` | Easy / Normal / Hard / Universe の譜面JSONを生成 |
+| `Yakiniku > Run > Game_Run を自動プレイして確認` | ノーミスで通しプレイして29項目を検査 |
+| `Yakiniku > Run > 画面を撮る` | VS・通常・フィーバー・ENCORE・スーパー・難易度選択・リザルトを撮影 |
+| `Yakiniku > 常にタイトルから再生する` | どのシーンを開いていても Play でタイトルから始める（ON/OFF） |
+
+コマンドライン（Unityを閉じた状態で）:
 
 ```
-Game_Run
-├ Main Camera        … CameraController (Player追従)
-├ Directional Light
-├ Player             … BoxCollider + Rigidbody + PlayerRunner
-│   └ PlayerModel    … 既存の Assets/Player/PlayerModel.prefab
-├ InputSource        … KeyboardRunInput（矢印 / WASD / Space）
-├ Ground             … GroundTiler（既存 Stage_Fixed.prefab を敷き続ける）
-├ Spawner            … JsonNoteProvider + RunSpawner
-├ GaugeController    … BeatGaugeController
-├ Canvas
-│   └ BeatGaugeSlider … Slider + BeatGaugeView
-└ EventSystem
+Unity.exe -batchmode -quit -projectPath <パス> -executeMethod Yakiniku.Run.EditorTools.RunSceneBuilder.BuildEverything
 ```
-
-生成したら **シーンを開いて Play を押すだけ**で動く。
-
-## 見た目のアセットは変更していない
-
-`Item` / `Obstacle` / `JumpObstacle` / `PlayerModel` / `Stage_Fixed` は他メンバーの担当なので、
-**ファイルは一切書き換えていない**。ランゲーム用のプレハブは、それらを子として抱え込み、
-当たり判定とゲームロジックを親側に持たせる構造にしてある。
-
-```
-Run_Obstacle (親・自分の担当)
-├ CapsuleCollider (isTrigger)  ← ゲーム上の当たり判定はこれだけ
-├ Obstacle (スクリプト)
-└ Obstacle (子・既存アセット)   ← 見た目専用。元のColliderは無効化してある
-```
-
-こうしている理由は2つ。
-
-1. **モデルを差し替えても当たり判定が壊れない。** スケールを変えても親のColliderは変わらない。
-2. **既存 `Obstacle.prefab` のColliderが実寸と合っていない。** モデルを100倍スケールで
-   使っているため、付いている CapsuleCollider が半径50m・高さ200mになっており、
-   そのまま使うとスタート直後に被弾する。元ファイルを直さずに回避したかった。
-
-見た目の大きさや向きがおかしい場合は、`Run_*.prefab` の**子**のTransformを調整すればよい。
-当たり判定（親のCollider）は触らなくてよい。
-
-## 寸法の決めごと
-
-数値は `RunSceneBuilder.cs` の先頭にまとめてある。
-
-| 項目 | 値 | 理由 |
-| --- | --- | --- |
-| 床の上面 | `y = 0` | `Stage_Fixed` の床は厚さ1mで原点が中心なので、原点を `-0.5` に置く |
-| `RunSettings.groundY` | `0.35` | プレイヤーの基準点。モデルの原点(足元)が床の上面に来る高さ |
-| プレイヤーの当たり判定 | 0.8 × 1.6 × 0.8 の箱 | モデルの胴体ぶん。`isTrigger` はオフ |
-| `Item` の生成Y | `1.0` | 半径0.7の球判定。レーン幅2mなので隣のレーンには届かない |
-| `Obstacle` の生成Y | `1.0` | 高さ2mのカプセル判定。ジャンプでは越えられない＝横に避ける |
-| `JumpObstacle` の生成Y | `0.5` | 判定の高さを0.8mに抑えてある（見た目は1m）ので、ジャンプで越えられる |
-
-`JumpObstacle` を越えられる根拠: `jumpHeight 1.6` / `gravity -25` だと滞空0.72秒で、
-判定の上(0.8m)より高い位置にいる時間が約0.5秒。前進10m/sで壁の判定を通過するのに
-必要な時間は約0.18秒なので、タイミングが多少ずれても越えられる。
-`jumpHeight` を下げるとここが詰まるので注意。
 
 ---
 
+# ゲームの流れ
+
+| 場面 | 内容 | 担当 |
+| --- | --- | --- |
+| 開始 | 自キャラ vs ライバルのカットイン → **Let's FIGHT!** → 走り出しと BGM を同時に開始 | `RunIntroSequence` |
+| 走行 | 5レーン。ノーツ(♪)を取るとスコアとゲージ、障害物で被弾、低い壁はジャンプ | `PlayerRunner` 他 |
+| 攻撃 | ♪を取ると、取った位置から奥のライバルへ**白い球が弧を描いて飛び**、着弾で体力が減る | `BeatOrbLauncher` |
+| 撃破 | 体力バーを削り切るとハートが1つ減る。**5つ全部割ると ENCORE TIME** | `RunRival` |
+| 終了 | **FINISH** → ☆ローディング → リザルト | `RunFinishSequence` |
+
+勝敗は「ライバルを撃破して、かつ生き残ったら WIN」。
+
+## フィーバーは2系統
+
+| 状態 | 入り方 | 長さ | ステージの色 | 倍率 |
+| --- | --- | --- | --- | --- |
+| フィーバー | キラメキビートゲージが満タン | 8秒 | ピンク | ×1.5 |
+| **ENCORE TIME** | ライバルのハートを全部割る | **曲の終わりまで** | **金** | ×2.0 |
+| **スーパーフィーバー** | **ENCORE とフィーバーが重なる** | 12秒 | **虹** | ×4.0 |
+
+状態は `BeatGaugeController` の `IsFever` と `IsEncore` の2つで持ち、
+**スーパー＝両方ON** と定義している。「ENCORE 中にゲージを溜め切った」でも
+「フィーバー中にライバルを撃破した」でも同じくスーパーになる。どちらが先かを覚える必要がない。
+
+## 譜面に合わせた自動調整（RunBalance）
+
+数値を固定で持つと、譜面が変わるたび（曲の差し替え・難易度違い）に撃破の地点やフィーバーの回数がずれる。
+そこで「どうなってほしいか」を設定に書き、実際の数値は譜面のノーツ数から逆算する。
+
+| 対象 | 狙い | 設定 |
+| --- | --- | --- |
+| ライバルの体力 | フルコンボで曲の **N割** 地点で撃破（本家: Hard 以上は9割） | `DifficultySettings.rivalDefeatAt` |
+| ゲージの溜まり方 | フルコンボで1曲に **3回** フィーバー | `GaugeSettings.feversPerSong` |
+
+実測（自動プレイ・ノーミス）:
+
+| 難易度 | 撃破の狙い → 実際 | フィーバー | スーパー |
+| --- | --- | --- | --- |
+| Easy | 75% → 76% | 3回 | 発動 |
+| Normal | 85% → 86% | 3回 | 発動 |
+| Hard | 90% → 90% | 3回 | 発動 |
+| Universe | 90% → 91% | 3回 | 発動 |
+
+3回目のフィーバーがちょうど ENCORE に重なるので、**フルコンボすれば終盤でスーパーフィーバーになる**。
+
+## スコア倍率
+
+**加算で積んでから、最後にフィーバー系を掛ける**。乗算で積むと要素が増えるたびに跳ね上がって調整が効かなくなるため。
+
+```
+倍率 = 1 + コンボ×0.02（上限+2.0） + ゲージ値×1.0 + 割ったハート数×0.5
+       そこに スーパー×4.0 ＞ ENCORE×2.0 ＞ フィーバー×1.5 のうち一番強いものを掛ける
+       最後に×10で頭打ち
+```
+
+計算は `ScoreSettings.CalculateMultiplier()` の1か所だけ。数値は全て `Settings_Run/ScoreSettings.asset`。
+
 ---
 
-# 本番シーンは Game_Run
+# 見た目
 
-`SceneController.StartGame()` は `Game_Run` を読む。旧 `Game` シーンは消さずに残してあるので、
-戻したい場合は `SceneController.cs` の1行を `"Game"` に書き換えればよい。
+## ステージは暗くする
 
-## 旧 Game シーンに残っている問題（Game_Run では解消済み）
+本家は暗いライブ会場。明るい空のままだと **HUD の白文字が読めず、ペンライトもレーンの光も映えなかった**。
+カメラの背景を濃紺の単色にし、遠景は同じ色のフォグに溶かしている。
+キャラの環境光は空(`RenderSettings.skybox`)から取るので、背景を消しても暗くならない。
 
-旧シーンを使い続ける場合は、以下が未修正であることに注意する。
+## 色で演出する（光度は上げない）
 
-| 症状 | 原因 |
+`StageTheme` が状態（通常／フィーバー／ENCORE／スーパー）に合わせて、
+**レーン・ペンライト・光の色味をまとめて切り替える**。明るさは全状態で同じにして、色相だけを変える。
+
+フィーバーで Bloom の強さを上げる方式も試したが、上げた瞬間に画面が白飛びして譜面が見えなくなった
+（スーパーフィーバーで画面がほぼ真っ白になった）。本家も ENCORE で金色基調になるだけで眩しくはならない。
+
+## レーン
+
+床のアセットの上に、暗い路面5本と光る境界線6本を1枚重ねている（`Run_LaneTrack`）。
+床タイルの子として生成されるので、床と一緒にループする。色は `StageTheme` が持つ共有材質で決まる。
+
+## ペンライト
+
+床の両サイドに、床タイルの子として生成される（`Run_PenlightStrip`）。
+
+- **曲に合わせて左右に揺れる**（2拍で1往復）。BPM は譜面JSONの `bpm` から取る（`PenlightSway`）
+- 色は通常が水色主体、フィーバーがピンク、ENCORE が橙〜金、スーパーが虹（本家どおり）
+
+### ペンライトの色の落とし穴
+
+**粒ごとの色は8bit(`Color32`)で、1.0を超える値は切り捨てられる。**
+HDRで光らせたいなら明るさは材質側(`_BaseColor`)に持たせ、粒の色は色相だけを担当する。
+
+**材質側の倍率は全成分に掛かるので、上げすぎると白くなる。**
+2.6倍にしたらピンク `(1, 0.4, 0.8)` が `(2.6, 1.04, 2.08)` になり、画面上はほぼ白だった。
+今は1.15倍に抑え、色そのものを「一番強い成分が1、残りは低め」の鮮やかな色にしてある。
+
+**2色のランダム補間（Random Between Two Colors）は使わない。**
+2色の「間」を取るので、補色に近い2色だと中間が白くなる。粒の色は `PenlightSway` が
+パレットから粒ごとに1色を選ぶ方式にしている。
+
+## Bloom
+
+プロファイルは `Settings_Run/GameRunVolume.asset`（共有の `Global Volume Profile 1` は Title や旧 Game で使うので書き換えない）。
+
+- **threshold 1.0**。元は0.2で、輝度0.2を超えるもの（床・空・キャラ）が全部光り、画面全体が白く飛んでいた
+- 閾値は最大チャンネルではなく**輝度**（`0.2126R + 0.7152G + 0.0722B`）で判定される。緑の重みが大きいので、同じ数値でもピンクや紫は光りにくい
+- カメラの `Render Post Processing` をONにしないと一切効かない
+
+光のにじみは主にレーンの境界線（HDR）と白い球が担う。
+
+## 見た目を変えたら絵で確認する
+
+数値だけで判断すると外す。`Yakiniku > Run > 画面を撮る` で8枚撮れる。
+バッチモードでは `ScreenCapture.CaptureScreenshot` が何も出力しないので、カメラを RenderTexture へ直接描いている。
+Overlay の Canvas は撮る瞬間だけカメラ描画に切り替えるので HUD も写る。
+
+---
+
+# HUD（仮）
+
+| 位置 | 内容 |
 | --- | --- |
-| 障害物が倒れてスポーンする | `StageManager` が `Quaternion.identity` で生成し、`Obstacle.prefab` の -90°(X) 補正回転を捨てている |
-| 開始1秒で見えないままHPが減る | `Obstacle.prefab` を100倍スケールで使っているため、CapsuleCollider が**半径50m・高さ200m**になっている |
-| ジャンプ障害物に当たると体力が残っていても止まる | 上記で開始時に体力を2つ失っているため、壁でHPが0になる。前進を止めているのはHP0のみ |
-| レーン±2のアイテムが取れない | `StageManager.laneDistance = 2.5` と `PlayerController.laneDistance = 2` が不一致 |
+| 最上部の紫の枠 | 上段にキラメキビートゲージ、下段にライバルの名前・体力バー・ハート |
+| 左上 | COMBO（大）／倍率／SCORE／LIFE（ハート5つ） |
+| 中央 | FEVER! / ENCORE TIME / SUPER FEVER!! のバナー（2秒だけ、暗い帯の上に出す） |
 
-`Game_Run` では当たり判定をスケール1の親に持たせ、レーン↔X変換を
-`RunSettings.LaneToX()` の1箇所に集約しているので、これらは構造的に起きない。
+**全て仮の見た目**。`Canvas/HUD` 配下は丸ごと作り直してよい。ロジックが知っているのは
+`BeatGaugeView`（Slider と Fill）と `RunHudView`（各テキストとバー）の参照だけ。
 
-## ゴール判定
+ハートは今は文字（♥♡）。画像にするなら `RunHudView.ApplyHearts` / `ApplyLife` を書き換える。
 
-`RunGoalWatcher` が持つ。`condition` で基準を切り替える。
+---
 
-| 値 | 判定 | 使う場面 |
+# 難易度選択・リザルト
+
+どちらも本家に寄せた仮の見た目。生成されるのはただの Image / TextMeshProUGUI なので、
+**Inspector でスプライトを入れれば差し替わる**。立ち絵は「立ち絵（仮）」と書いた色板の Image。
+
+## 難易度
+
+| 難易度 | 譜面 | 解放 |
 | --- | --- | --- |
-| `ChartEnd`（現在） | 譜面の最後のノーツから `goalMarginZ`(15m) 先まで走ったら終了 | **曲の制作中。** 曲121秒に対し譜面17秒なので、曲基準だと100秒以上空の床を走ることになる |
-| `BgmLength` | BGMが鳴り終わったら終了 | **曲と譜面が揃ったらこちらに戻す** |
+| Easy / Normal / Hard | 最初から | |
+| Universe | 最初はロック | **Hard を SS 以上で WIN** すると解放（本家どおり） |
 
-切り替えは `Game_Run` の `GoalWatcher` の Inspector で `Condition` を変えるだけ。
+難易度ごとの設定は `Resources/DifficultySettings.asset` に1か所でまとまっている。
+難易度を足すときはここに1行足すだけで、選択画面にも並ぶ。
 
-なお `GameManager` も曲の長さでクリア判定を持っているが、二重に発火しないよう
-`Game_Run` では `GameManager.bgmSource` を**意図的に空**にしてある。
-BGM は `BGM` オブジェクトの `AudioSource` が持ち、`GoalWatcher` がそれを見る。
-`GameManager.bgmSource` に割り当て直すと終了判定が二重になるので注意。
+## ランク
 
-## 床の両サイドのペンライト
+**ノーミスで走り切ったときのスコア（`perfectScore`）に対する割合**で決める。
+譜面の長さや難易度でスコアの桁が変わっても、同じ基準でランクが付く。
 
-`GroundTiler` の `Side Props` に `Run_PenlightStrip.prefab` を入れてあり、
-**床タイル1枚につき左右へ1列ずつ、タイルの子として生成**される。
-床と同じ仕組みで前方へ回るので、床とズレることがない。
-
-| 項目 | 値 | 備考 |
-| --- | --- | --- |
-| `Side Prop Offset X` | 6.5 | 床幅10m（端は5m）の外側に出す |
-| 1列の粒数 | 450 | 元の `Particle System.prefab` は1回のバーストで50000個だった |
-| Simulation Space | **World** | Local にするとタイルを動かした瞬間に粒が付いてきて「ペンライトが追尾する」状態になる |
-
-見た目のプレハブ（`Assets/Particle System.prefab`）は**書き換えていない**。
-子として抱えて、並べ方だけ上書きしている。
-
-### Bloom が無いと光らない
-
-`Game_Run` には `Global Volume`（プロファイルは `Global Volume Profile 1`、Bloom の
-threshold 0.2 / intensity 2）を置き、**カメラの `Render Post Processing` をONにしてある**。
-Volume を置いてもカメラ側がOFFだと Bloom は一切効かず、ペンライトは
-ただの明るいベタ塗り＝白い棒になる。どちらか片方でも欠けると白くなるので注意。
-
-### 発光について
-
-元の `PenlightMat` は `_EmissionColor` が 0.749 で、Bloom の threshold 0.9 に届かないため
-どれだけ Bloom を足しても光らなかった（これが「のっぺり」の主因）。シェーダが
-`ParticlesUnlit` で陰影も付かないので、ベタ塗りのシルエットになっていた。
-
-`Game_Run` では複製した `Settings_Run/PenlightMat_Run.mat` を使い、
-
-- マテリアルの一律な灰色加算を切る（全体に乗って立体感を消していた）
-- 代わりに**粒ごとの色**で光らせる
-
-としてある。色を変えたい場合は `Run_PenlightStrip.prefab` の
-ParticleSystem → Start Color を触る。
-
-**2色のランダム補間（Random Between Two Colors）にしてはいけない。**
-2色の「間」をランダムに取る挙動なので、ピンクと水色のような補色に近い
-組み合わせだと中間がほぼ白になり、大半のペンライトが白くなる。
-Gradient を **Fixed（段階）** にして **Random Color** で引けば、各粒は必ず
-指定した色のどれかになり彩度が残る。現在はピンク／水色／黄緑／橙／紫の5色。
-
-既存 `PenlightMat` は旧 Game シーンでも使われているため、あえて書き換えていない。
-
-## スコア倍率とライバル
-
-### ライバル
-
-本家はこの位置がライバルの体力バーで、削り切るとハートが1つ減り、
-ハートが全部なくなるとフィーバーという作り。キラメキビートゲージを
-オリジナル要素として最上部に置いたので、ライバル体力はそのすぐ下に出している。
-
-| 流れ | 実装 |
+| ランク | 割合 |
 | --- | --- |
-| アイテムを取る | `RunScore` が `RunRival.ApplyHit()` を呼ぶ |
-| 体力バーを削り切る | ハートが1つ減り、撃破数が1増える。体力バーは満タンに戻る |
-| ハートを全部割る | `BeatGaugeController.TriggerFever()` でフィーバー発動 |
+| SS+ | 95% |
+| SS | 85% |
+| S | 70% |
+| A | 55% |
+| B | 40% |
+| C | それ未満 |
 
-フィーバーのきっかけは「ゲージ満タン」と「ハート全割り」の2つあるが、
-**状態の持ち主は `BeatGaugeController` 1つ**に保っている。
-`TriggerFever()` は発動を依頼するだけ。
+`perfectScore` は自動プレイ（ノーミス）で測った値。**譜面やスコア計算を変えたら、
+自動プレイテストが出す `[CALIBRATE]` 行を見て `RunSceneBuilder.CreateDifficultySettings` の値を直す**。
 
-`rivalRespawns` をオンにしてあるので、ハートを全部割ったあとライバルは復活する。
-撃破数は通算で積み上がり、そのままスコア倍率の加算要素になる。
+バッジ画像は `Resources/RankSettings.asset` の `badge` に入れれば差し替わる（空なら色付きの丸と文字）。
 
-### スーパーフィーバー
+## 保存
 
-フィーバーのきっかけは2つある。
+ハイスコア・最高ランク・クリア済みは `RunProgress`（PlayerPrefs）。Android でもそのまま使える。
+ランクは WIN したときだけ記録する（負けたのにランクが付くと解放条件がおかしくなるため）。
 
-| きっかけ | 条件 |
+## リザルト単体で開いたとき
+
+`RunSession.LastResult` が無いので見本の結果が出る。見た目の調整のたびにゲームを1回遊ばなくて済む。
+
+---
+
+# 効果音（仮）
+
+素材が無いので、**コードで合成した仮の音**が鳴る（`SeSynth`）。
+本番の音源ができたら `Resources/SeSettings.asset` の該当行に AudioClip を入れるだけで差し替わる。
+
+| 音 | 場面 |
 | --- | --- |
-| `FeverSource.Gauge` | キラメキビートゲージが満タンになった |
-| `FeverSource.Rival` | ライバルのハートを全部割った |
+| ItemGet / OrbHit | ♪取得 / 白い球がライバルに当たった |
+| Damage / Jump | 被弾 / ジャンプ |
+| HeartBreak | ライバルのハートを割った |
+| Fever / Encore / SuperFever | 各状態の開始 |
+| Versus / Fight / Finish | 開始演出・終了 |
+| UiTap / UiDecide | ボタン |
+| Win / Lose | リザルト |
 
-**フィーバー中にもう一方のきっかけを満たすとスーパーフィーバーに昇格する。**
-同じきっかけを重ねても昇格しない（アイテム連取で暴発しないように）。
-
-昇格すると、
-
-- 残り時間が `superFeverDuration`(12秒) に置き換わる
-- スコア倍率が `superFeverMultiplier`(×4.0) になる
-- ゲージが虹色に回って明滅する
-- 画面全体の Bloom が強くなって脈打つ（`FeverScreenEffect`）
-- HUDに `SUPER FEVER!!` が虹色で出る
-
-#### 実装上の注意
-
-フィーバー開始時に**見た目を整えるためゲージを満タンにしている**。
-このとき `BeatGauge.OnFull` が飛ぶが、これは「ゲージが溜まって発動した」
-わけではないので、昇格のきっかけとして数えてはいけない。
-`isFillingForDisplay` で区別している。ここを外すと、ライバル撃破で
-フィーバーに入った瞬間に勝手にスーパーフィーバーへ昇格する。
-
-`FeverScreenEffect` は `volume.profile` を使っている。
-**`sharedProfile` を実行時に書き換えるとアセットそのものが汚れて、
-エディタを止めても値が戻らない。** `profile` は実行時に複製を作る。
-
-### 倍率の計算
-
-```
-倍率 = 1
-     + コンボ数 × comboRate   （上限 comboBonusMax）
-     + ゲージの値 × gaugeBonusMax
-     + 撃破数 × rivalDefeatBonus
-フィーバー中は上の合計に feverMultiplier を掛ける
-最後に maxMultiplier で頭を押さえる
-```
-
-**加算で積んでから最後に掛ける**方式にしている。乗算で積むと要素が増えるたびに
-跳ね上がって調整が効かなくなるため。計算は `ScoreSettings.CalculateMultiplier()`
-の1箇所だけなので、式を変えたい場合もそこを直せばよい。
-
-初期値:
-
-| 項目 | 値 | 意味 |
-| --- | --- | --- |
-| `comboRate` | 0.02 | 100コンボで +2.0（上限に到達） |
-| `comboBonusMax` | 2.0 | コンボぶんの上限 |
-| `gaugeBonusMax` | 1.0 | ゲージ満タンで +1.0 |
-| `rivalDefeatBonus` | 0.5 | 1撃破ごとに +0.5 |
-| `feverMultiplier` | 2.0 | フィーバー中は合計を2倍 |
-| `superFeverMultiplier` | 4.0 | スーパーフィーバー中は合計を4倍 |
-| `maxMultiplier` | 10.0 | 最終的な頭打ち |
-| `rivalMaxHp` | 50 | 体力バー1本ぶん |
-| `rivalHearts` | 3 | ハートの数 |
-| `rivalDamagePerHit` | 1 | アイテム1個のダメージ |
-
-### フィーバー中もゲージは裏で溜まる
-
-フィーバー中はゲージの値が「残り時間」の表示に変わるので、通常の加算は止まる。
-そのままだと**「ゲージ満タン」というきっかけがフィーバー中に成立せず**、
-スーパーフィーバーへの昇格がライバル側からの一方通行になり、
-「ハート全割りの瞬間がたまたまフィーバー中だった」という運任せになる。
-
-そこでフィーバー中も裏で溜め続け、1周ぶん溜まったらゲージ側のきっかけが
-揃ったものとして昇格を試みる。**フィーバー中にさらに取り続けるとスーパーフィーバー**
-という遊び方になる。
-
-### 既存 GameManager との関係
-
-`GameManager` にも score / combo / rivalHp / isBonusTime があるが、
-コンボ倍率しか無く数値がコードに直書きされている。`Game_Run` では
-`RunScore` / `RunRival` を使い、`GameManager` は置いていない。
-旧 `Game` シーンはこれまで通り `GameManager` で動く。
-
-リザルトへのスコア受け渡しは従来どおり `GameData.finalScore` 経由。
-`RunGoalWatcher` が `RunScore` から取って書き込む。
-
-## HUD（仮）
-
-`Canvas/HUD` 配下は**全て仮の見た目**。
-
-日本語を出すためのフォントは `Assets/Fonts/` にある（詳細はそちらのREADME）。
-TMP の Fallback に登録してあるので、他のシーンのテキストも日本語が出る。
-差し替えるときは `HUD` ごと作り直してよい。
-ゲームロジックが知っているのは次の参照だけなので、これを繋ぎ直せば見た目は自由。
-
-| 繋ぎ先 | 必要なもの |
-| --- | --- |
-| `BeatGaugeView` | `Slider` と、色を変える `Image`（Slider の Fill） |
-| `GameManager` | `scoreText` / `comboText` / `playerHpText` / `rivalHpText` の4つ |
-
-`BeatGaugeView` は Slider の値を書くだけの一方通行なので、Slider をやめて
-独自の画像演出にする場合も、ゲージ側のロジックは無改修で済む。
-
-## シーン生成スクリプトを触るときの注意
-
-`EditorSceneManager.NewScene` は、シーンを切り替える際に**どこからも参照されていない
-アセットをメモリから破棄する**。そのため
-
-```csharp
-var settings = AssetDatabase.LoadAssetAtPath<RunSettings>(path);  // ここで読んで
-var scene = EditorSceneManager.NewScene(...);                     // ここで破棄され
-SetField(runner, "settings", settings);                           // null が入る
-```
-
-という順で書くと、**シーンは問題なく生成されるのに参照だけ空**という壊れ方をする。
-Play しても「RunSettings が設定されていません」と出てプレイヤーが動かない。
-
-アセットの取得は必ず `NewScene` の**後**に行うこと。`SetField` には破棄済み参照を
-弾くガードを入れてあるので、間違えた場合は例外で止まる。
-
-## 自動テストと音
-
-`RunSmokeTest` は `-batchmode` でも Play モードに入るため、そのままだと
-BGM がスピーカーから鳴る。作業中に裏で鳴り出すのを防ぐため、
-テスト開始時に `AudioListener.volume = 0` にしてある。
-
-## Playを押すとタイトルから始まる
-
-`Editor/PlayFromTitle.cs` が `EditorSceneManager.playModeStartScene` に Title を指定している。
-`Game_Run` を編集中に実行しても、難易度選択を通ってから始まる。
-
-単一シーンだけをデバッグしたいときは
-
-```
-Yakiniku > 常にタイトルから再生する
-```
-
-のチェックを外す。設定は `EditorPrefs`（各自の環境ごと）なので、他のメンバーには影響しない。
+鳴らすのは `RunSe.Play(SeId.xxx)`。ゲーム中のイベントへの紐付けは `RunSeHooks` に集約してあり、
+ロジック側は音を一切知らない。
 
 ---
 
 # 譜面
 
-譜面は `Editor/ChartGenerator.cs` で生成する。
+`Yakiniku > Run > 譜面を生成`。曲がまだ制作中で長さもBPMも変わるため、手書きではなくパラメータから組み立てる。
+シード固定なので同じ設定なら同じ譜面になる。
 
-```
-Yakiniku > Run > 譜面を生成
-```
+**曲を差し替えたら `ChartGenerator` の `SongSeconds` と `Bpm` を直して作り直す。**
+`ForwardSpeed` は `RunSettings.forwardSpeed` と必ず合わせる。
 
-曲がまだ制作中で長さもBPMも変わるため、手書きの譜面を置くと作り直しになる。
-パラメータから組み立てておけば、曲が固まった時点で数値を変えて作り直せる。
-シード固定なので、同じ設定なら必ず同じ譜面になる。
-
-**曲を差し替えたら `ChartGenerator` の `SongSeconds` と `Bpm` を直すこと。**
-`ForwardSpeed` は `RunSettings.forwardSpeed` と必ず合わせる。ここがズレると曲と譜面が合わない。
-
-## 生成される譜面
-
-| 難易度 | 刻み | ノーツ数 | アイテム | 障害物 | 低い壁 |
+| 難易度 | 刻み | ノーツ | アイテム | 障害物 | 低い壁 |
 | --- | --- | --- | --- | --- | --- |
-| Easy | 4分の2拍ごと | 153 | 139 | 9 | 5 |
-| Normal | 4分 | 311 | 279 | 24 | 8 |
-| Hard | 8分 | 613 | 561 | 38 | 14 |
+| Easy | 2拍ごと | 156 | 139 | 12 | 5 |
+| Normal | 4分 | 313 | 279 | 26 | 8 |
+| Hard | 8分 | 612 | 561 | 37 | 14 |
+| Universe | 8分 | 634 | 553 | 59 | 22 |
 
-難易度を上げるときに障害物だけ増やすとアイテムの枠が潰れて**かえって稼げなくなる**ので、
-Hard は刻み自体を8分にして密度を上げている。
-
-`Select` シーンは Easy / Normal / Hard の3つを参照しているので、3つとも生成している
-（以前は Normal しか存在せず、Easy と Hard を選ぶと譜面が読めなかった）。
-
-## 置き方の考え方
+## 置き方
 
 1. 先に**進路**（どのレーンを走るか）を決める。一定間隔で隣のレーンへ動かし、端では折り返す
-2. アイテムは進路の上に置く。いきなり2レーン飛ばさないので、普通に追いかければ全部取れる
-3. 障害物は進路の**隣**に置く。まっすぐ走る分には当たらないが、雑に動くと引っかかる
-4. 低い壁は全レーンを塞ぐ。ジャンプで越える想定なので、同じ位置にアイテムは置かない
+2. アイテムは進路の上に置く。普通に追いかければ全部取れる
+3. 障害物は進路の**隣**に置く。ただし**前後3mの間に進路が通るレーンには置かない**
+4. 低い壁は全レーンを塞ぐ。同じ位置にアイテムは置かない
 
-自動プレイテストはこの譜面を読んで追従するので、譜面を作り直しても期待値を直す必要はない。
+3 の制限が無いと、進路が切り替わった直後に「さっきまで居たレーン」へ障害物が来て、避ける猶予が1m程度しか無い。
+Universe ではこれで自動プレイヤーが死んだ（人間でも理不尽）。距離で決めているのは、
+ステップ数で決めると刻みの粗い Easy で空けすぎて障害物がほぼ消えたため。
+
+障害物の間隔は進路切り替えの間隔の倍数にしないこと。倍数だと毎回ちょうど切り替え地点に来て置けなくなる。
 
 ---
 
-# 動作確認チェックリスト
-
-## 自動で確認する
+# 自動プレイテスト
 
 ```
 Yakiniku > Run > Game_Run を自動プレイして確認
 ```
 
-これを実行すると Play モードに入り、下のチェックリストを機械的に確認して
-Console に結果を出す（`Assets/Scripts/Run/Editor/RunSmokeTest.cs`）。
-入力はキーボードの代わりに `PlayerRunner` のAPIを直接呼んでいるので、
-操作しなくても最後まで走る。4倍速で動かすので数秒で終わる。
+譜面を読んで追従する自動プレイヤーがノーミスで通しプレイし、29項目を検査する。
+コマンドラインでは環境変数 `YAKINIKU_DIFFICULTY=Easy|Normal|Hard|Universe` で難易度を変えられる。
 
-CIやコマンドラインから回す場合（Unityを閉じた状態で。全項目OKなら終了コード0）:
+- バッチモードでも音は鳴るので、テスト中は消音している
+- テストの結果で手元のハイスコアや解放状態が書き換わらないよう、**開始前に退避して終了後に戻す**
+- 出力の `[CALIBRATE]` 行がノーミス時のスコア。ランク基準の校正に使う
 
-```
-Unity.exe -batchmode -projectPath <プロジェクトのパス> -executeMethod Yakiniku.Run.EditorTools.RunSmokeTest.Run
-```
-
-譜面を差し替えると期待値（ノーツのZ座標）が合わなくなるので、
-`RunSmokeTest.cs` の先頭の定数も直すこと。
-
-## 自分の目で確認する
-
-Play して以下を確認する。譜面は `spawnZ` が 20〜170 なので、約17秒で終わる。
-
-- [ ] 自動で前に進む
-- [ ] 矢印キー / A・D で5レーン（-2〜2）を移動でき、両端で止まる
-- [ ] ↑ / W / Space でジャンプし、着地する
-- [ ] 床が途切れずに続く
-- [ ] 20m地点あたりから音符（アイテム）が出てくる
-- [ ] 音符に触れると消えて、画面上部のゲージが増える
-- [ ] 60m地点の障害物に当たるとダメージを受ける（Consoleで確認）
-- [ ] 100m地点の低い壁はジャンプで越えられる
-- [ ] ゲージが満タンになると点滅する（フィーバー）
-
-## うまく動かないとき
-
-シーンを自動生成しているので参照の割当漏れは起きないはずだが、
-手で触って壊した場合は以下を疑う。迷ったら `Yakiniku > Run > Game_Run シーンを生成` を
-もう一度実行すれば元に戻る。
-
-| 症状 | 原因 |
-| --- | --- |
-| `Create` / `Yakiniku` メニューが出てこない | スクリプトがコンパイルできていない。Console を見る |
-| プレイヤーが動かない | `PlayerRunner` の `Settings` 未割当（Console にエラーが出る） |
-| キー入力が効かない | `PlayerRunner` の `Input Source` 未割当 |
-| アイテムをすり抜ける | プレハブの Collider の `Is Trigger` がオフ／`Player` に Rigidbody が無い |
-| 障害物に当たらない | `Player` の Collider が `Is Trigger` になっている（オフにする） |
-| 障害物が出てこない | `Note Prefabs` の `Type` 文字列が譜面JSONと不一致 |
-| 障害物が床に埋まる／浮く | `RunSpawner` の `Spawn Y`、または `Run_*.prefab` の子のY位置 |
-| スタート直後に被弾する | `Run_*.prefab` の子（見た目側）の Collider が有効に戻っている |
-| モデルが見えない／遠くにある | `PlayerModel` の子の localPosition が 0 になっていない |
-| 床が途切れる | `Tile Length` がプレハブの実寸と不一致／`Pivot At Center` の設定ミス |
-| ゲージが動かない | `BeatGaugeController` の `Player` 未割当 |
-| ゲージUIが動かない | `BeatGaugeView` の `Controller` / `Slider` 未割当 |
-| ジャンプで壁を越えられない | `RunSettings.jumpHeight` に対して壁が高い |
+検査項目の例: 演出中は走り出さない／LIFE 5／白い球が全部届く／狙った地点で撃破／フィーバー2〜4回／
+ENCORE で金色／スーパー発動／ノーミスで SS+／ペンライトが揺れる／画面の文字が全部フォントにある 等。
 
 ---
 
-# 他メンバー向けの接続点
+# シーン生成スクリプトを触るときの注意
 
-## メンバーC（タッチ・スワイプ入力）
+## アセットは NewScene の後に取る
 
-`RunInputSourceBehaviour` を継承して `Enqueue()` を呼ぶだけ。ゲーム側の改修は不要。
+`EditorSceneManager.NewScene` はシーン切り替えの際に**どこからも参照されていないアセットをメモリから破棄する**。
+先に読んだ参照を使うと、シーンは生成できるのに参照だけ空、という壊れ方をする（Play するとプレイヤーが動かない）。
+`BuilderUtil.SetField` は破棄済みの参照を渡すと例外を出すようにしてある。
 
-```csharp
-public sealed class SwipeRunInput : RunInputSourceBehaviour
-{
-    private void Update()
-    {
-        // スワイプを検出したら…
-        Enqueue(RunInputAction.MoveLeft);
-    }
-}
-```
+## 豆腐（□）
 
-作ったら `PlayerRunner` の `Input Source` を差し替えるだけで動く。
+`BuilderUtil.CreateText` は生成時にフォントに無い字が無いか検査し、あれば `[BuilderUtil] フォントに無い字があります` を出す。
+記号は日本語フォントでも入っていないものが多い（実際 `↩` `✦` が豆腐になった）。
 
-**可変リフレッシュレートについて**: `PlayerRunner` の移動・ジャンプは全て `FixedUpdate`
-（固定間隔）で計算しているので、画面が 60Hz でも 120Hz でも挙動は変わらない設計。
-検証時はここが崩れていないかを見てほしい。
+検査には `HasCharacters(text, out missing, true, true)` を使う。第4引数(tryAddCharacter)が false だと
+**アトラスに読み込み済みの字しか見ない**ので、まだ一度も描画していない字を「無い」と誤判定する。
 
-## メンバーB（バトル・演出）
+## 日本語フォント
 
-- **ゲージ比較**: `BeatGaugeController.Value`（0〜1）を比較すれば勝敗判定できる。
-  ライバル側も同じ `BeatGaugeController` を `player` 未設定で置き、
-  `AddGauge()` を外から呼べばAIとして動かせる。
-- **アイドルごとのステータス差**: `GaugeSettings` を複数作って差し替える。
-  移動性能に差を付けたい場合は `RunSettings` も同様。
-- **演出のトリガー**: 以下の event を購読する。
-
-```csharp
-gaugeController.Gauge.OnChanged += value => { /* ゲージ変動 */ };
-gaugeController.Gauge.OnFull    += ()    => { /* 満タン演出 */ };
-gaugeController.OnFeverStart    += ()    => { /* フィーバー開始 */ };
-gaugeController.OnComboChanged  += combo => { /* コンボ演出 */ };
-player.OnItemCollected          += item  => { /* 取得エフェクト */ };
-player.OnDamaged                += hp    => { /* 被弾エフェクト */ };
-```
+`Assets/Fonts/` の Noto Sans JP（SIL OFL 1.1）。詳細はそちらの README。
+TMP の Fallback に登録してあるので、他シーンのテキストも日本語が出る。
 
 ---
 
-# 既存実装からの移行
+# ファイル一覧
 
-既存の一連の流れ（Title → Select → Game → Result）は動いているので、**壊さずに並行して立ち上げる**。
+## ゲーム
 
-| 既存スクリプト | 扱い |
+| ファイル | 役割 |
 | --- | --- |
-| `GameManager` | **そのまま使う**。`RunGameBridge` 経由で接続する |
-| `GameData` / `SceneController` | **そのまま使う**。シーン遷移と難易度選択は変更なし |
-| `CameraController` | **そのまま使う**。`PlayerRunner` でも問題なく追従する |
-| `StageData` / 譜面JSON | **そのまま使う**。`JsonNoteProvider` が同じ形式を読む |
-| `PlayerController` | `PlayerRunner` に置き換え |
-| `StageManager` | `RunSpawner`(ノーツ) + `GroundTiler`(床) に分割して置き換え |
+| `RunSettings.cs` | レーン・速度・ジャンプ・LIFE。**レーン↔X座標の変換はここが唯一の定義** |
+| `PlayerRunner.cs` | 自動前進・レーン切替・ジャンプ・被弾 |
+| `Inputs/` | 入力元（キーボード・デバッグボタン）。差し替え可能 |
+| `RunSpawner.cs` / `JsonNoteProvider.cs` | 譜面の読み込みと先読み生成（プール） |
+| `GroundTiler.cs` | 床のループ。両サイド（ペンライト）と中央（レーン）も一緒に生成 |
+| `BeatItem.cs` / `Obstacle.cs` | ノーツと障害物 |
+| `BeatGauge.cs` / `BeatGaugeController.cs` / `GaugeSettings.cs` | ゲージとフィーバー／ENCORE の状態 |
+| `RunRival.cs` | ライバルの体力・ハート・撃破 |
+| `RivalView.cs` | 奥に立つライバルの姿 |
+| `BeatOrbLauncher.cs` | 白い球。着弾でライバルの体力を削る |
+| `RunScore.cs` / `ScoreSettings.cs` | スコアと倍率 |
+| `RunBalance.cs` | 譜面に合わせてライバル体力とゲージを決める |
+| `RunGoalWatcher.cs` | 終了判定（譜面基準／曲基準を切替） |
+| `StageTheme.cs` | レーン・ペンライト・光の色 |
+| `LaneTrack.cs` / `PenlightStrip.cs` / `PenlightSway.cs` | レーン、ペンライト1列、揺れ |
+| `RunHudView.cs` / `BeatGaugeView.cs` | HUD |
+| `Sequences/` | 開始演出・終了演出 |
+| `Audio/` | 効果音 |
 
-上の手順で作った `Game_Run` シーンが問題なく動いたら、既存 `Game` シーンの
-UI（Canvas 配下のテキスト類）と `GameManager` をこちらに持ってきて差し替える。
-既存シーンはそのまま残るので、うまくいかなければ戻せる。
+## 画面の流れ・難易度・保存
 
-## 注意点
+| ファイル | 役割 |
+| --- | --- |
+| `Flow/RunFlow.cs` | 遷移の入口（シーン名はここだけ） |
+| `Flow/RunLoadingOverlay.cs` | ☆のローディング。シーンをまたいで残る |
+| `Flow/DifficultySettings.cs` | 難易度ごとの設定 |
+| `Flow/RankSettings.cs` | ランクの基準とバッジ |
+| `Flow/RunSession.cs` | シーン間で持ち回る結果 |
+| `Flow/RunProgress.cs` | ハイスコア・ランク・解放状態の保存 |
+| `UI/SelectView.cs` / `UI/ResultView.cs` / `UI/RankBadgeView.cs` | 難易度選択・リザルト |
 
-- `PlayerRunner` は起動時にプレイヤーを `Z=0` / `groundY` の高さへスナップさせる。
-  シーン上の初期配置は無視される。
-- 既存 `PlayerController` は `transform.position` 直書きと Rigidbody を併用していたため、
-  同じ GameObject に両方を付けたままにすると位置の取り合いになる。必ずどちらかを無効化する。
+## エディタ
+
+| ファイル | 役割 |
+| --- | --- |
+| `Editor/RunSceneBuilder.cs` | Game_Run と共通アセット |
+| `Editor/SelectSceneBuilder.cs` / `Editor/ResultSceneBuilder.cs` | 難易度選択・リザルト |
+| `Editor/BuilderUtil.cs` | 生成の共通処理（UI部品・参照の書き込み・豆腐検査） |
+| `Editor/ChartGenerator.cs` | 譜面 |
+| `Editor/RunSmokeTest.cs` | 自動プレイテスト |
+| `Editor/RunScreenshot.cs` | 画面の撮影 |
+| `Editor/PlayFromTitle.cs` | Play でタイトルから始める |
+
+---
+
+# 残っていること
+
+- **縦画面（Android）**: 本家は縦持ち。今は横で組んであるが、難易度選択・リザルトは中央寄せの縦長レイアウトなので
+  縦(1080x1920)でもほぼそのまま収まる。ゲーム画面の HUD とカメラは縦用に組み直しが要る
+- **JUMP ボタン**: 本家の画面下の JUMP。`RunInputSourceBehaviour` を継承して `Enqueue(RunInputAction.Jump)` するだけ
+- **立ち絵・バッジ・SE の本番素材**: 全て差し替えるだけで済む形にしてある
+- **曲が完成したら**: `ChartGenerator` の `SongSeconds` / `Bpm` を直して譜面を作り直し、ランク基準を校正する。
+  終了判定を曲基準にするなら `GoalWatcher` の `Condition` を `BgmLength` に
+
+---
 
 # 設計上の決めごと
 
-- **レーン番号は中央を0とした -2〜2**。既存の譜面JSON(`NoteData.lane`)と同じ形式。
-  レーン↔X座標の変換は `RunSettings.LaneToX()` のみを使い、他の場所で計算しない。
-- **プレイヤーの Rigidbody は kinematic**。物理任せにすると前進速度やジャンプ滞空時間が
-  環境でブレるが、譜面に合わせて障害物が来るゲームなのでタイミングは決定的である必要がある。
-  地面判定もコライダーではなく `groundY` との比較で行う。
-- **障害物の生成は先読み方式 + プール**。開始時に全ノーツを生成すると曲が長いほど重くなる。
-  `Destroy` の連発は Android で GC によるカクつきの原因になる。
-- **asmdef は作っていない**。既存の `GameManager` / `StageData` が Assembly-CSharp にあり、
-  asmdef からは参照できないため。将来 EditMode テストを書く場合は、
-  それらを含めて asmdef 化する必要がある。
-- **新規ファイルは UTF-8(BOM付き)**。既存ファイルは Shift-JIS なので、
-  混在させると環境によって日本語コメントが化ける。以後は UTF-8 に揃えたい。
+- **レーン番号は中央を0とした -2〜2**。レーン↔X座標の変換は `RunSettings.LaneToX()` のみを使う
+- **プレイヤーの Rigidbody は kinematic**。譜面に合わせて障害物が来るゲームなのでタイミングは決定的である必要がある
+- **移動は FixedUpdate**。画面が 60Hz でも 120Hz でも挙動は変わらない
+- **障害物の生成は先読み + プール**。`Destroy` の連発は Android で GC によるカクつきの原因になる
+- **毎フレーム呼ばれる処理でラムダを作らない**。同じく GC の原因になる
+- **見た目のアセットは子として抱えるだけ**。当たり判定はスケール1の親に持たせ、モデルを差し替えても壊れないようにする
+- **新規ファイルは UTF-8(BOM付き)**。既存ファイルは Shift-JIS
+- **旧 Game シーンは残してある**。`SceneController.StartGame()` の1行を `"Game"` に戻せば切り替わるが、
+  倒れた障害物・巨大な当たり判定・レーン座標の不一致はそちらに残ったまま
