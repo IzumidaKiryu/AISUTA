@@ -64,7 +64,9 @@ namespace Yakiniku.Run.EditorTools
             {
                 FileName = "StageData_Easy",
                 Subdivision = 1,
-                StepsPerItem = 2, StepsPerObstacle = 16, StepsPerJumpWall = 48,
+                // 障害物の間隔は進路切り替え(8)の倍数にしない。倍数だと障害物が毎回
+                // ちょうど切り替え地点に来て、置ける場所が無くなる（実際3個まで減った）
+                StepsPerItem = 2, StepsPerObstacle = 20, StepsPerJumpWall = 48,
                 StepsPerLaneShift = 8, Seed = 1001,
             },
             new ChartSpec
@@ -81,6 +83,15 @@ namespace Yakiniku.Run.EditorTools
                 Subdivision = 2,
                 StepsPerItem = 1, StepsPerObstacle = 12, StepsPerJumpWall = 40,
                 StepsPerLaneShift = 8, Seed = 3003,
+            },
+            new ChartSpec
+            {
+                // Hard を SS でクリアすると遊べる最上位。
+                // 刻みは Hard と同じ8分のまま、障害物・壁・進路の切り替えを詰める
+                FileName = "StageData_Universe",
+                Subdivision = 2,
+                StepsPerItem = 1, StepsPerObstacle = 7, StepsPerJumpWall = 26,
+                StepsPerLaneShift = 5, Seed = 4004,
             },
         };
 
@@ -144,11 +155,14 @@ namespace Yakiniku.Run.EditorTools
                 if (beat % spec.StepsPerObstacle == 0 && beat > 0)
                 {
                     // 走っているレーンの隣に置く。まっすぐ走る分には当たらないが、
-                    // 雑にレーンを動かすと引っかかる位置
-                    int offset = random.Next(2) == 0 ? -1 : 1;
-                    int obstacleLane = Mathf.Clamp(lane + offset, -2, 2);
-
-                    if (obstacleLane != lane)
+                    // 雑にレーンを動かすと引っかかる位置。
+                    //
+                    // ただし前後数ステップで進路が通るレーンには置かない。
+                    // 進路が切り替わった直後だと「さっきまで居たレーン」に障害物が来て、
+                    // 避ける猶予が1m程度しか無い（人間でも理不尽）。
+                    int clearance = Mathf.Max(1, Mathf.CeilToInt(ObstacleClearanceMeters / stepLength));
+                    int obstacleLane = PickObstacleLane(lanePath, beat, clearance, random);
+                    if (obstacleLane != int.MinValue)
                     {
                         notes.Add(new NoteData
                         {
@@ -165,6 +179,40 @@ namespace Yakiniku.Run.EditorTools
 
             return notes;
         }
+
+        /// <summary>
+        /// 障害物を置くレーンを選ぶ。進路の隣で、かつ前後 clearance ステップの間に
+        /// 進路が通らないレーン。置ける場所が無ければ int.MinValue（置かない）。
+        /// </summary>
+        private static int PickObstacleLane(int[] lanePath, int step, int clearance, System.Random random)
+        {
+            int lane = lanePath[step];
+            var candidates = new List<int>(2);
+
+            foreach (int offset in new[] { -1, 1 })
+            {
+                int candidate = lane + offset;
+                if (candidate < -2 || candidate > 2) continue;
+
+                bool onPath = false;
+                for (int s = step - clearance; s <= step + clearance; s++)
+                {
+                    if (s < 0 || s >= lanePath.Length) continue;
+                    if (lanePath[s] == candidate) { onPath = true; break; }
+                }
+
+                if (!onPath) candidates.Add(candidate);
+            }
+
+            return candidates.Count == 0 ? int.MinValue : candidates[random.Next(candidates.Count)];
+        }
+
+        /// <summary>
+        /// 障害物の前後、進路が通ってはいけない距離(m)。
+        /// ステップ数で決めると刻みの粗い譜面(Easy は1ステップ4m)で空けすぎて障害物が消えるので、距離で決める。
+        /// 横移動は 2m を 0.11秒（前に1.1m進む）なので、それより十分長くとる
+        /// </summary>
+        private const float ObstacleClearanceMeters = 3f;
 
         /// <summary>
         /// 走る進路を作る。一定間隔で隣のレーンへ動かし、端では折り返す。
@@ -208,6 +256,12 @@ namespace Yakiniku.Run.EditorTools
         {
             var sb = new StringBuilder();
             sb.AppendLine("{");
+
+            // 曲のテンポ。ペンライトを曲に合わせて振るのに使う（StageData には無いので別に読む）
+            sb.Append("    \"bpm\": ");
+            sb.Append(Bpm.ToString("0.###", CultureInfo.InvariantCulture));
+            sb.AppendLine(",");
+
             sb.AppendLine("    \"notes\": [");
 
             for (int i = 0; i < notes.Count; i++)

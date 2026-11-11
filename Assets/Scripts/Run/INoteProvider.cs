@@ -17,5 +17,8 @@ namespace Yakiniku.Run
     public abstract class NoteProviderBehaviour : MonoBehaviour, INoteProvider
     {
         public abstract IReadOnlyList<NoteData> GetNotes();
+
+        /// <summary>曲のテンポ。分からなければ0。ペンライトを曲に合わせて振るのに使う</summary>
+        public virtual float Bpm => 0f;
     }
 }

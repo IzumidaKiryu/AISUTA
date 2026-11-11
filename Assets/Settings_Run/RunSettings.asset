@@ -19,5 +19,5 @@ MonoBehaviour:
   jumpHeight: 1.6
   gravity: -25
   groundY: 0.35
-  maxHealth: 3
+  maxHealth: 5
   invincibleTime: 1.5

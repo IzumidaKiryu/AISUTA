@@ -37,6 +37,12 @@ namespace Yakiniku.Run
         public int Combo { get; private set; }
         public int MaxCombo { get; private set; }
 
+        /// <summary>取ったノーツの数（リザルト用）</summary>
+        public int ItemsCollected { get; private set; }
+
+        /// <summary>被弾した回数（リザルト用）</summary>
+        public int DamageTaken { get; private set; }
+
         /// <summary>今アイテムを取ったら掛かる倍率</summary>
         public float Multiplier { get; private set; } = 1f;
 
@@ -76,13 +82,12 @@ namespace Yakiniku.Run
         private void HandleItemCollected(BeatItem item)
         {
             Combo++;
+            ItemsCollected++;
             if (Combo > MaxCombo) MaxCombo = Combo;
             OnComboChanged?.Invoke(Combo);
 
-            // ライバルへのダメージは倍率を更新する前に入れる。
-            // 撃破した瞬間に取ったアイテムへ、その撃破ボーナスを乗せたいため
-            if (rival != null) rival.ApplyHit();
-
+            // ライバルへのダメージはここでは入れない。
+            // 白い球がライバルに届いた時点で入る（BeatOrbLauncher）
             RefreshMultiplier();
 
             int baseScore = item != null ? item.Score : 0;
@@ -92,6 +97,8 @@ namespace Yakiniku.Run
 
         private void HandleDamaged(int remainingHealth)
         {
+            DamageTaken++;
+
             if (Combo == 0) return;
 
             Combo = 0;
@@ -103,11 +110,11 @@ namespace Yakiniku.Run
         {
             float gaugeValue = gauge != null ? gauge.Value : 0f;
             bool isFever = gauge != null && gauge.IsFever;
-            bool isSuperFever = gauge != null && gauge.IsSuperFever;
-            int defeats = rival != null ? rival.Defeats : 0;
+            bool isEncore = gauge != null && gauge.IsEncore;
+            int heartsBroken = rival != null ? rival.HeartsBroken : 0;
 
             float next = settings.CalculateMultiplier(
-                Combo, gaugeValue, defeats, isFever, isSuperFever);
+                Combo, gaugeValue, heartsBroken, isFever, isEncore);
             if (Mathf.Approximately(next, Multiplier)) return;
 
             Multiplier = next;
@@ -120,6 +127,8 @@ namespace Yakiniku.Run
             Score = 0;
             Combo = 0;
             MaxCombo = 0;
+            ItemsCollected = 0;
+            DamageTaken = 0;
             Multiplier = 1f;
 
             OnScoreChanged?.Invoke(Score);

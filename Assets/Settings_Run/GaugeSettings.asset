@@ -12,12 +12,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6a82e2a96c102a1429df2a0f66ff2d1e, type: 3}
   m_Name: GaugeSettings
   m_EditorClassIdentifier: Assembly-CSharp::Yakiniku.Run.GaugeSettings
-  gainPerItem: 0.06
-  gainPerSecond: 0.02
-  comboGainRate: 0.05
-  maxComboMultiplier: 2
-  decayPerSecond: 0.01
-  damagePenalty: 0.15
+  gainPerItem: 0.02
+  gainPerSecond: 0
+  comboGainRate: 0
+  maxComboMultiplier: 1
+  decayPerSecond: 0
+  damagePenalty: 0.1
   feverDuration: 8
   drainDuringFever: 1
   superFeverDuration: 12
+  feversPerSong: 3
