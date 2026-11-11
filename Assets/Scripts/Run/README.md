@@ -28,6 +28,7 @@ Yakiniku > Run > 全部生成
 | `Yakiniku > Run > 全部生成` | 3シーンと共通アセットをまとめて生成 |
 | `Yakiniku > Run > 譜面を生成` | Easy / Normal / Hard / Universe の譜面JSONを生成 |
 | `Yakiniku > Run > Game_Run を自動プレイして確認` | ノーミスで通しプレイして29項目を検査 |
+| `Yakiniku > Run > 画面遷移を確認` | 実際のボタンを押して 難易度選択→ゲーム→リザルト→もう一度→ステージ選択 を一周 |
 | `Yakiniku > Run > 画面を撮る` | VS・通常・フィーバー・ENCORE・スーパー・難易度選択・リザルトを撮影 |
 | `Yakiniku > 常にタイトルから再生する` | どのシーンを開いていても Play でタイトルから始める（ON/OFF） |
 
@@ -280,6 +281,9 @@ Yakiniku > Run > Game_Run を自動プレイして確認
 - テストの結果で手元のハイスコアや解放状態が書き換わらないよう、**開始前に退避して終了後に戻す**
 - 出力の `[CALIBRATE]` 行がノーミス時のスコア。ランク基準の校正に使う
 
+自動プレイテストはシーンを直接開くので、☆のローディングを通らない。そこで例外が出ても気付けなかったので、
+**画面遷移を触ったら `画面遷移を確認` も回す**こと。
+
 検査項目の例: 演出中は走り出さない／LIFE 5／白い球が全部届く／狙った地点で撃破／フィーバー2〜4回／
 ENCORE で金色／スーパー発動／ノーミスで SS+／ペンライトが揺れる／画面の文字が全部フォントにある 等。
 
@@ -354,6 +358,7 @@ TMP の Fallback に登録してあるので、他シーンのテキストも日
 | `Editor/BuilderUtil.cs` | 生成の共通処理（UI部品・参照の書き込み・豆腐検査） |
 | `Editor/ChartGenerator.cs` | 譜面 |
 | `Editor/RunSmokeTest.cs` | 自動プレイテスト |
+| `Editor/RunFlowTest.cs` | 画面遷移のテスト（☆ローディングを実際に通す） |
 | `Editor/RunScreenshot.cs` | 画面の撮影 |
 | `Editor/PlayFromTitle.cs` | Play でタイトルから始める |
 
