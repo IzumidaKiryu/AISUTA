@@ -42,9 +42,21 @@ namespace Yakiniku.Run
             var go = new GameObject("~RunLoadingOverlay");
             DontDestroyOnLoad(go);
 
-            current = go.AddComponent<RunLoadingOverlay>();
-            current.Build();
-            current.StartCoroutine(current.Run(sceneName));
+            try
+            {
+                current = go.AddComponent<RunLoadingOverlay>();
+                current.Build();
+                current.StartCoroutine(current.Run(sceneName));
+            }
+            catch (System.Exception e)
+            {
+                // 演出の組み立てで失敗しても、遷移そのものは止めない。
+                // ここで current を戻さないと「遷移中」のまま残り、以後どのボタンを押しても遷移しなくなる
+                Debug.LogException(e);
+                current = null;
+                Destroy(go);
+                SceneManager.LoadScene(sceneName);
+            }
         }
 
         /// <summary>遷移中かどうか（二重押し防止に使う）</summary>
@@ -89,8 +101,10 @@ namespace Yakiniku.Run
                 float angle = Mathf.PI * 0.5f - i * Mathf.PI * 2f / StarCount;
                 var pos = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * Radius;
 
+                // CreateChild は RectTransform 付きで作るので、AddComponent せずに取り出す。
+                // AddComponent<RectTransform>() は既にあると null を返し、ここで落ちていた
                 var starGo = CreateChild("Star" + i);
-                var rect = starGo.AddComponent<RectTransform>();
+                var rect = (RectTransform)starGo.transform;
                 rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
                 rect.anchoredPosition = pos;
                 rect.sizeDelta = new Vector2(56f, 56f);
