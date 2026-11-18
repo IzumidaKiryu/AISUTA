@@ -8,6 +8,7 @@ namespace Yakiniku.Run.Inputs
 {
     /// <summary>
     /// スマホ向けのタッチ入力。左右スワイプでレーン移動、上スワイプでジャンプ。
+    /// 画面の左半分／右半分のタップでもレーン移動できる（<see cref="tapAction"/>）。
     ///
     /// 【指を離すのを待たずに発火する】
     /// 譜面に合わせて障害物が来るゲームなので、離した瞬間に判定すると
@@ -21,6 +22,11 @@ namespace Yakiniku.Run.Inputs
     ///
     /// 複数の指は独立して扱うので、片手で移動しながらもう片手でジャンプもできる。
     ///
+    /// 【タップは指を離したときに判定する】
+    /// 押した瞬間に動かすと、画面の左側から右へスワイプしたときに「左へ動いてから右へ動く」ことになる。
+    /// 指を離した時点でスワイプのしきい値まで動いていなければタップとみなす。
+    /// ふつうのタップは触れている時間が 0.1 秒前後なので、遅れはその程度で済む。
+    ///
     /// 【ボタンの上は無視する】JUMP ボタンなどを押した指がそのまま少し動くと
     /// スワイプ扱いになってしまうので、<see cref="ignoreAreas"/> の中で始まった指は見ない。
     /// </summary>
@@ -33,9 +39,22 @@ namespace Yakiniku.Run.Inputs
         [Tooltip("ここで触り始めた指はスワイプとして扱わない（JUMP ボタン等）。Screen Space - Overlay の UI を想定")]
         [SerializeField] private List<RectTransform> ignoreAreas = new List<RectTransform>();
 
+        /// <summary>短いタップ（スワイプにならなかった指）で何をするか。</summary>
+        public enum TapAction
+        {
+            /// <summary>何もしない</summary>
+            None,
+
+            /// <summary>どこをタップしてもジャンプ</summary>
+            Jump,
+
+            /// <summary>画面の左半分なら左へ、右半分なら右へレーン移動</summary>
+            MoveBySide,
+        }
+
         [Header("タップ")]
-        [Tooltip("短いタップでジャンプする。誤爆しやすいので既定は OFF")]
-        [SerializeField] private bool tapToJump;
+        [Tooltip("短いタップで何をするか。既定は画面の左右半分でレーン移動")]
+        [SerializeField] private TapAction tapAction = TapAction.MoveBySide;
 
         [Tooltip("タップと見なす最大の押下時間（秒）")]
         [SerializeField, Min(0.01f)] private float tapMaxDuration = 0.25f;
@@ -155,10 +174,23 @@ namespace Yakiniku.Run.Inputs
 
         private void TryFireTap(Touch touch)
         {
-            if (!tapToJump) return;
+            if (tapAction == TapAction.None) return;
 
+            // 長押ししてから離したものはタップとみなさない（迷って指を置いていただけの場合など）
             double duration = touch.time - touch.startTime;
-            if (duration <= tapMaxDuration) Enqueue(RunInputAction.Jump);
+            if (duration > tapMaxDuration) return;
+
+            switch (tapAction)
+            {
+                case TapAction.Jump:
+                    Enqueue(RunInputAction.Jump);
+                    break;
+
+                case TapAction.MoveBySide:
+                    bool left = touch.startScreenPosition.x < Screen.width * 0.5f;
+                    Enqueue(left ? RunInputAction.MoveLeft : RunInputAction.MoveRight);
+                    break;
+            }
         }
     }
 }
