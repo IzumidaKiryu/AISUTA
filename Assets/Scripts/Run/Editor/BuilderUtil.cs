@@ -4,6 +4,8 @@ using TMPro;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
 
@@ -251,13 +253,70 @@ namespace Yakiniku.Run.EditorTools
             return rect;
         }
 
+        /// <summary>Input System パッケージに入っている既定の UI 操作（Point / Click / Navigate など）。</summary>
+        private const string DefaultUiActionsPath =
+            "Packages/com.unity.inputsystem/InputSystem/Plugins/PlayerInput/DefaultInputActions.inputactions";
+
+        /// <summary>
+        /// UI のボタンを押せるようにする EventSystem。
+        ///
+        /// 【新しい入力方式(Input System)で受け付ける】旧方式の StandaloneInputModule は
+        /// Active Input Handling が Both / Old のときしか動かない。Android では Both は非推奨なので、
+        /// プロジェクトを Input System のみにしたうえで InputSystemUIInputModule を使う。
+        /// </summary>
         public static void EnsureEventSystem()
         {
             if (Object.FindFirstObjectByType<EventSystem>() != null) return;
 
             var es = new GameObject("EventSystem");
             es.AddComponent<EventSystem>();
-            es.AddComponent<StandaloneInputModule>();
+            var module = es.AddComponent<InputSystemUIInputModule>();
+            AssignDefaultUiActions(module);
+        }
+
+        /// <summary>
+        /// 既定の UI 操作をシーンに保存される形で割り当てる（Inspector から付けたときと同じ参照になる）。
+        /// 割り当てが無くても実行時に既定値が入るが、シーンに残しておけば中身が Inspector で見える。
+        /// </summary>
+        private static void AssignDefaultUiActions(InputSystemUIInputModule module)
+        {
+            var asset = AssetDatabase.LoadAssetAtPath<InputActionAsset>(DefaultUiActionsPath);
+            if (asset == null)
+            {
+                Debug.LogWarning("[BuilderUtil] 既定の UI 操作が見つかりません。実行時の既定値に任せます: " + DefaultUiActionsPath);
+                return;
+            }
+
+            // .inputactions の中に、アクションごとの InputActionReference がサブアセットとして入っている
+            var references = new Dictionary<string, InputActionReference>();
+            foreach (var sub in AssetDatabase.LoadAllAssetsAtPath(DefaultUiActionsPath))
+            {
+                if (sub is InputActionReference reference && reference.action != null)
+                {
+                    references[reference.action.actionMap.name + "/" + reference.action.name] = reference;
+                }
+            }
+
+            var so = new SerializedObject(module);
+            so.FindProperty("m_ActionsAsset").objectReferenceValue = asset;
+
+            void Set(string field, string action)
+            {
+                var prop = so.FindProperty(field);
+                if (prop != null && references.TryGetValue(action, out var reference)) prop.objectReferenceValue = reference;
+            }
+
+            Set("m_PointAction", "UI/Point");
+            Set("m_MoveAction", "UI/Navigate");
+            Set("m_SubmitAction", "UI/Submit");
+            Set("m_CancelAction", "UI/Cancel");
+            Set("m_LeftClickAction", "UI/Click");
+            Set("m_MiddleClickAction", "UI/MiddleClick");
+            Set("m_RightClickAction", "UI/RightClick");
+            Set("m_ScrollWheelAction", "UI/ScrollWheel");
+            Set("m_TrackedDevicePositionAction", "UI/TrackedDevicePosition");
+            Set("m_TrackedDeviceOrientationAction", "UI/TrackedDeviceOrientation");
+            so.ApplyModifiedPropertiesWithoutUndo();
         }
 
         public static RectTransform CreateRect(Transform parent, string name)
