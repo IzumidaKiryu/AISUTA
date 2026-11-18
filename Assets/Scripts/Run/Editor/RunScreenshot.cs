@@ -23,14 +23,17 @@ namespace Yakiniku.Run.EditorTools
     ///   コマンドライン    Unity.exe -batchmode -projectPath . -executeMethod
     ///                     Yakiniku.Run.EditorTools.RunScreenshot.Capture
     ///                     （出力先は環境変数 YAKINIKU_SHOT_DIR。-quit は付けない）
+    ///
+    /// 縦持ちが基準なので 1080x1920 で撮る。縦長の端末(9:20 等)で崩れないか見たいときは
+    /// 環境変数 YAKINIKU_SHOT_SIZE に "1080x2400" のように渡す。
     /// </summary>
     public static class RunScreenshot
     {
         private const string ScenePath = "Assets/Scenes/Game_Run.unity";
         private const string SessionKey = "Yakiniku.Run.Screenshot";
 
-        private const int Width = 1280;
-        private const int Height = 720;
+        private const int DefaultWidth = 1080;
+        private const int DefaultHeight = 1920;
 
         [MenuItem("Yakiniku/Run/画面を撮る", false, 21)]
         public static void Capture()
@@ -59,6 +62,8 @@ namespace Yakiniku.Run.EditorTools
         private sealed class Shooter : MonoBehaviour
         {
             private string outputDir;
+            private int width = DefaultWidth;
+            private int height = DefaultHeight;
 
             private IEnumerator Start()
             {
@@ -66,7 +71,19 @@ namespace Yakiniku.Run.EditorTools
 
                 outputDir = System.Environment.GetEnvironmentVariable("YAKINIKU_SHOT_DIR");
                 if (string.IsNullOrEmpty(outputDir)) outputDir = Directory.GetCurrentDirectory();
-                Debug.Log($"[RunScreenshot] 出力先 {outputDir}");
+                var size = System.Environment.GetEnvironmentVariable("YAKINIKU_SHOT_SIZE");
+                if (!string.IsNullOrEmpty(size))
+                {
+                    var parts = size.ToLowerInvariant().Split('x');
+                    if (parts.Length == 2 && int.TryParse(parts[0], out int w) && int.TryParse(parts[1], out int h)
+                        && w > 0 && h > 0)
+                    {
+                        width = w;
+                        height = h;
+                    }
+                }
+
+                Debug.Log($"[RunScreenshot] 出力先 {outputDir} ({width}x{height})");
 
                 // 結果画面に遷移されると撮りたい状態が崩れるので止めておく
                 var finish = FindFirstObjectByType<RunFinishSequence>();
@@ -184,11 +201,16 @@ namespace Yakiniku.Run.EditorTools
                     switched.Add(canvas);
                 }
 
-                var rt = new RenderTexture(Width, Height, 24, RenderTextureFormat.ARGB32) { antiAliasing = 1 };
+                var rt = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32) { antiAliasing = 1 };
                 var previousTarget = cam.targetTexture;
                 var previousActive = RenderTexture.active;
 
                 cam.targetTexture = rt;
+
+                // 描画先を変えるとアスペクト比が変わるので、画角を撮る大きさに合わせ直す
+                var fitter = cam.GetComponent<CameraWidthFitter>();
+                if (fitter != null) fitter.Apply();
+
                 Canvas.ForceUpdateCanvases();
 
                 // 2回描く。1回目はシェーダ側の準備（lilToon など）が間に合わず、キャラが黒く写ることがある
@@ -196,8 +218,8 @@ namespace Yakiniku.Run.EditorTools
                 cam.Render();
 
                 RenderTexture.active = rt;
-                var texture = new Texture2D(Width, Height, TextureFormat.RGB24, false);
-                texture.ReadPixels(new Rect(0, 0, Width, Height), 0, 0);
+                var texture = new Texture2D(width, height, TextureFormat.RGB24, false);
+                texture.ReadPixels(new Rect(0, 0, width, height), 0, 0);
                 texture.Apply();
 
                 cam.targetTexture = previousTarget;

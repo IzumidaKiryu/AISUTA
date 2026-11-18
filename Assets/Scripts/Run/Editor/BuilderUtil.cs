@@ -189,9 +189,24 @@ namespace Yakiniku.Run.EditorTools
         // UI
         // =====================================================================
 
+        /// <summary>縦持ち前提の基準解像度。レイアウトはこの 1080x1920 の中に収めて組む。</summary>
+        public static readonly Vector2 ReferenceResolution = new Vector2(1080f, 1920f);
+
         /// <summary>
-        /// 画面全体の Canvas。基準解像度 1920x1080・幅と高さの中間で合わせるので、
-        /// 中央に寄せた縦長のレイアウトは縦持ち(1080x1920)でもそのまま収まる。
+        /// 画面上端の「上部エリア」の高さ。本家の画面ではここに配信アプリのコメント欄が重なっているので、
+        /// 各画面の本体（HUD・帯・カード等）はこの下から置き、ここには画面ごとの情報を入れる。
+        ///   ゲーム中         … 実況ログ欄（<see cref="RunEventFeed"/>）
+        ///   難易度選択・リザルト … プレイヤー情報の帯（<see cref="BuildPlayerStatus"/>）
+        /// </summary>
+        public const float TopAreaHeight = 440f;
+
+        /// <summary>
+        /// 画面全体の Canvas。縦持ち(1080x1920)を基準にする。
+        ///
+        /// 【Expand で合わせる】基準の 1080x1920 が必ず画面内に丸ごと収まるよう拡大率を決める。
+        /// 9:20 のような縦長の端末では上下に、タブレットのような横に広い端末では左右に余白が増えるだけで、
+        /// 基準の範囲に置いたものは絶対に画面外へはみ出さない。
+        /// 上下端に付けたもの（HUD・戻るボタン等）は端に付いたまま、中央のものは中央に残る。
         /// </summary>
         public static Canvas CreateCanvas(string name, int sortingOrder = 0)
         {
@@ -202,11 +217,38 @@ namespace Yakiniku.Run.EditorTools
 
             var scaler = go.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920f, 1080f);
-            scaler.matchWidthOrHeight = 0.5f;
+            scaler.referenceResolution = ReferenceResolution;
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.Expand;
 
             go.AddComponent<GraphicRaycaster>();
             return canvas;
+        }
+
+        /// <summary>
+        /// セーフエリア（ノッチやホームバーを避けた範囲）に合わせた入れ物。
+        /// 背景は Canvas 直下に全画面で敷き、文字やボタンはこの下に置く。
+        /// </summary>
+        public static RectTransform CreateSafeArea(Transform canvas, string name = "SafeArea")
+        {
+            var rect = Stretch(CreateRect(canvas, name));
+            rect.gameObject.AddComponent<SafeAreaFitter>();
+            return rect;
+        }
+
+        /// <summary>
+        /// 幅を基準(1080)に固定し、上下いっぱいに伸ばした中央の列。
+        /// タブレットのような横に広い端末で、左右の端に付けたもの（見出し・立ち絵・戻る等）が
+        /// 画面の端まで離れてレイアウトがバラけるのを防ぐ。スマホでは画面幅と同じなので見た目は変わらない。
+        /// </summary>
+        public static RectTransform CreateColumn(Transform parent, string name = "Column")
+        {
+            var rect = CreateRect(parent, name);
+            rect.anchorMin = new Vector2(0.5f, 0f);
+            rect.anchorMax = new Vector2(0.5f, 1f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = Vector2.zero;
+            rect.sizeDelta = new Vector2(ReferenceResolution.x, 0f);
+            return rect;
         }
 
         public static void EnsureEventSystem()
@@ -290,6 +332,89 @@ namespace Yakiniku.Run.EditorTools
                 WarnMissingGlyphs(font, name, text);
             }
 
+            return label;
+        }
+
+        /// <summary>
+        /// 上部エリアに置くプレイヤー情報の帯（本家のステータス行に相当）。
+        ///   上段 … アイコン・名前（左）、クリアした難易度の数（右）
+        ///   下段 … 累計ハイスコア（左）、難易度ごとの最高ランクとクリア済みの印（右）
+        /// 値は <see cref="PlayerStatusView"/> が保存済みの記録から入れる。
+        /// </summary>
+        public static PlayerStatusView BuildPlayerStatus(Transform parent)
+        {
+            var white = Color.white;
+            var soft = new Color(1f, 1f, 1f, 0.7f);
+            var chipColor = new Color(1f, 1f, 1f, 0.14f);
+            var topLeft = new Vector2(0f, 1f);
+            var topRight = new Vector2(1f, 1f);
+
+            var panel = CreatePanel(parent, "PlayerStatus", new Color(0.36f, 0.27f, 0.6f, 0.95f),
+                new Vector2(0.5f, 1f), new Vector2(0f, -24f), new Vector2(1040f, 392f));
+            var p = panel.transform;
+
+            // --- 上段: アイコンと名前 ---
+            var avatar = CreatePanel(p, "Avatar", Hex("#FF8FC8"), topLeft, new Vector2(28f, -28f), new Vector2(140f, 140f),
+                Builtin("UI/Skin/Knob.psd"));
+            avatar.type = UnityEngine.UI.Image.Type.Simple;
+            CreateText(avatar.transform, "Mark", "★", 64f, white, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(120f, 120f));
+
+            var name = CreateText(p, "Name", "あなた", 46f, white, topLeft, new Vector2(196f, -38f), new Vector2(520f, 60f),
+                TextAlignmentOptions.MidlineLeft, FontStyles.Bold);
+            CreateText(p, "Title", "アイドルバトル 挑戦者", 24f, soft, topLeft, new Vector2(198f, -106f), new Vector2(460f, 34f),
+                TextAlignmentOptions.MidlineLeft);
+
+            // --- 上段右: クリア数 ---
+            var clearPill = CreatePanel(p, "ClearPill", chipColor, topRight, new Vector2(-28f, -28f), new Vector2(260f, 140f));
+            CreateText(clearPill.transform, "Label", "★ クリア", 24f, new Color(1f, 0.85f, 0.35f), topLeft, new Vector2(18f, -12f),
+                new Vector2(220f, 32f), TextAlignmentOptions.TopLeft, FontStyles.Bold);
+            var clearCount = CreateText(clearPill.transform, "Value", "0 / 0", 52f, white, new Vector2(1f, 0f), new Vector2(-18f, 10f),
+                new Vector2(230f, 70f), TextAlignmentOptions.BottomRight, FontStyles.Bold);
+
+            // --- 下段左: 累計ハイスコア ---
+            var totalPill = CreatePanel(p, "TotalScorePill", chipColor, topLeft, new Vector2(28f, -196f), new Vector2(420f, 168f));
+            CreateText(totalPill.transform, "Label", "累計ハイスコア", 24f, new Color(1f, 0.85f, 0.35f), topLeft, new Vector2(20f, -14f),
+                new Vector2(380f, 32f), TextAlignmentOptions.TopLeft, FontStyles.Bold);
+            var total = ShrinkToFit(CreateText(totalPill.transform, "Value", "0", 56f, white, new Vector2(1f, 0f), new Vector2(-20f, 16f),
+                new Vector2(380f, 76f), TextAlignmentOptions.BottomRight, FontStyles.Bold), 30f);
+
+            // --- 下段右: 難易度ごとの最高ランク ---
+            var difficulties = (RunDifficulty[])Enum.GetValues(typeof(RunDifficulty));
+            var chips = new (RunDifficulty difficulty, RankBadgeView badge, GameObject mark)[difficulties.Length];
+            for (int i = 0; i < difficulties.Length; i++)
+            {
+                var chip = CreatePanel(p, "Chip_" + difficulties[i], chipColor, topLeft,
+                    new Vector2(470f + i * 136f, -196f), new Vector2(124f, 168f));
+                ShrinkToFit(CreateText(chip.transform, "Name", difficulties[i].ToString(), 20f, soft, new Vector2(0.5f, 1f),
+                    new Vector2(0f, -8f), new Vector2(116f, 28f), TextAlignmentOptions.Center, FontStyles.Bold), 14f);
+                var badge = CreateRankBadge(chip.transform, "RankBadge", new Vector2(0.5f, 0.5f), new Vector2(0f, -4f), 84f);
+                var mark = CreateText(chip.transform, "Cleared", "★", 24f, new Color(1f, 0.85f, 0.35f), new Vector2(0.5f, 0f),
+                    new Vector2(0f, 6f), new Vector2(116f, 30f));
+                chips[i] = (difficulties[i], badge, mark.gameObject);
+            }
+
+            var view = panel.gameObject.AddComponent<PlayerStatusView>();
+            SetField(view, "nameText", name);
+            SetField(view, "totalScoreText", total);
+            SetField(view, "clearCountText", clearCount);
+            SetObjectArray(view, "chips", chips.Length, (e, i) =>
+            {
+                SetRelative(e, "difficulty", (int)chips[i].difficulty);
+                SetRelative(e, "rankBadge", chips[i].badge);
+                SetRelative(e, "clearedMark", chips[i].mark);
+            });
+            return view;
+        }
+
+        /// <summary>
+        /// 枠の幅に収まらないときだけ文字を小さくする。大きな演出文字（FEVER! / Let's FIGHT! 等）用。
+        /// 縦持ちでは横幅が 1080 しかないので、文言を差し替えたときにはみ出さないようにしておく。
+        /// </summary>
+        public static TextMeshProUGUI ShrinkToFit(TextMeshProUGUI label, float minSize)
+        {
+            label.fontSizeMax = label.fontSize;
+            label.fontSizeMin = minSize;
+            label.enableAutoSizing = true;
             return label;
         }
 

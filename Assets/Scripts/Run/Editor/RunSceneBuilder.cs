@@ -104,6 +104,19 @@ namespace Yakiniku.Run.EditorTools
         /// </summary>
         private static readonly Color StageBackground = new Color(0.07f, 0.055f, 0.16f);
 
+        // カメラ。縦持ちで5レーンを横に収めるため、横持ち時代(高さ6m・9m後ろ)より高く遠くに引く。
+        // 横幅は CameraWidthFitter が画角で合わせるので、ここは「どの角度から見下ろすか」だけを決める。
+        //
+        // 本家の縦持ち画面に合わせ、9:16 で
+        //   地平線 … 上から約33%（その上は実況ログ欄とライバルの枠）
+        //   ライバル … 上から約34〜39%
+        //   プレイヤー … 上から約75%（その下に JUMP ボタン）
+        // になるよう、高さ・距離・見下ろし角を逆算してある（縦の画角はおよそ70°）。
+        private static readonly Vector3 CameraPosition = new Vector3(0f, 8.9f, -10.8f);
+        private const float CameraPitch = 15.6f;
+        // プレイヤーの位置で左右に見せたい幅(m)。端のレーンの外側(±5m)がちょうど画面端に来る
+        private const float CameraHalfWidth = 5.0f;
+
         // ライバルはノーツの先読み(60m)より奥に、遠くでも見える大きさで立たせる
         private const float RivalDistance = 64f;
         private const float RivalHeight = 4.5f;
@@ -739,8 +752,13 @@ namespace Yakiniku.Run.EditorTools
             model.transform.localScale = Vector3.one * ModelScale;
             FixPlayerModelChildren(model);
 
+            // キーボード（エディタ確認用）とタッチ（実機用）を同時に受け付ける。
+            // PlayerRunner には合流役の CompositeRunInput だけを渡す
             var inputGo = new GameObject("InputSource");
-            var input = inputGo.AddComponent<KeyboardRunInput>();
+            var keyboardInput = inputGo.AddComponent<KeyboardRunInput>();
+            var swipeInput = inputGo.AddComponent<SwipeRunInput>();
+            var input = inputGo.AddComponent<CompositeRunInput>();
+            // 合流させる入力元は、JUMP ボタンを作った後（UI のところ）で設定する
 
             var runner = player.AddComponent<PlayerRunner>();
             SetField(runner, "settings", runSettings);
@@ -851,9 +869,17 @@ namespace Yakiniku.Run.EditorTools
             var camera = Camera.main;
             if (camera != null)
             {
-                camera.transform.position = new Vector3(0f, 6f, -9f);
-                camera.transform.rotation = Quaternion.Euler(20f, 0f, 0f);
+                camera.transform.position = CameraPosition;
+                camera.transform.rotation = Quaternion.Euler(CameraPitch, 0f, 0f);
                 camera.farClipPlane = 300f;
+
+                // 縦長の端末ほど横が狭く写るので、端のレーンが切れないよう画角を合わせる
+                var fitter = camera.gameObject.GetComponent<CameraWidthFitter>();
+                if (fitter == null) fitter = camera.gameObject.AddComponent<CameraWidthFitter>();
+                SetField(fitter, "focus", player.transform);
+                SetField(fitter, "halfWidth", CameraHalfWidth);
+                SetField(fitter, "baseFieldOfView", 60f);
+                SetField(fitter, "maxFieldOfView", 80f);
 
                 // 空を描かず単色で塗る。キャラの環境光は空(RenderSettings.skybox)から取るので暗くならない
                 camera.clearFlags = CameraClearFlags.SolidColor;
@@ -911,7 +937,12 @@ namespace Yakiniku.Run.EditorTools
 
             // --- UI ---
             var canvas = CreateCanvas("Canvas");
-            BuildHud(canvas.transform, gauge, score, rival, runner);
+            var jumpInput = BuildHud(CreateSafeArea(canvas.transform), gauge, score, rival, runner);
+
+            // キーボード（エディタ確認用）・スワイプ（レーン移動）・JUMP ボタンを合流させる。
+            // JUMP ボタンの上で始まった指はスワイプとして扱わない
+            SetArrayField(input, "sources", new Object[] { keyboardInput, swipeInput, jumpInput });
+            SetArrayField(swipeInput, "ignoreAreas", new Object[] { jumpInput.transform });
             BuildIntro(canvas.transform, runner, rival, bgm);
             BuildFinish(canvas.transform, goal, runner, score, rival, spawner);
             EnsureEventSystem();
@@ -1042,33 +1073,53 @@ namespace Yakiniku.Run.EditorTools
         // =====================================================================
         // HUD
         //
-        // 配置は本家に寄せてある。
-        //   最上部     … キラメキビートゲージ（オリジナル要素なので一番上）
-        //   そのすぐ下 … ライバルの体力バー（名前とハート付きの枠）
-        //   左上       … COMBO（大）／倍率／SCORE／LIFE
-        //   中央       … FEVER / ENCORE TIME / SUPER FEVER!! のバナー
+        // 配置は本家（縦持ち）に合わせてある。1080x1920 基準、セーフエリアの中に置く。
+        //   上部エリア(TopAreaHeight) … 実況ログ欄（出来事が吹き出しで下から積み上がる）
+        //   その下     … ライバルの枠（名前・ハート・体力バー）
+        //   そのすぐ下 … キラメキビートゲージ（オリジナル要素なので細く添える）
+        //   左         … COMBO（大）／倍率／SCORE（左端に寄せた白い枠）／LIFE
+        //   上寄り中央 … FEVER / ENCORE TIME / SUPER FEVER!! のバナー
+        //   下端中央   … JUMP ボタン（丸）
         // 全て仮の見た目。Image にスプライトを入れれば差し替わる。
         // =====================================================================
 
         private static readonly Color Ink = new Color(0.22f, 0.16f, 0.42f);
         private static readonly Color FramePurple = new Color(0.36f, 0.25f, 0.62f, 0.92f);
+        private static readonly Color HudGold = new Color(1f, 0.85f, 0.35f);
+        private static readonly Color HudPink = new Color(1f, 0.45f, 0.65f);
+        private static readonly Color JumpOrange = new Color(1f, 0.55f, 0.2f);
 
-        private static void BuildHud(Transform canvas, BeatGaugeController gauge, RunScore score,
+        /// <summary>JUMP ボタン（入力元）を返す。InputSource の合流先とスワイプの除外範囲に使う。</summary>
+        private static PressRunInput BuildHud(Transform hud, BeatGaugeController gauge, RunScore score,
             RunRival rival, PlayerRunner player)
         {
-            var hud = Stretch(CreateRect(canvas, "HUD"));
             var top = new Vector2(0.5f, 1f);
             var topLeft = new Vector2(0f, 1f);
+            float y0 = TopAreaHeight;
 
-            // --- 上部の枠（本家の紫の枠）。上段にキラメキビート、下段にライバルの体力 ---
-            var frame = CreatePanel(hud, "TopFrame", FramePurple, top, new Vector2(0f, -10f), new Vector2(900f, 112f));
+            // --- 上部エリア: 実況ログ欄 ---
+            BuildEventFeed(hud, player, rival, gauge, score);
 
-            CreateText(frame.transform, "GaugeLabel", "キラメキビート", 22f, new Color(1f, 0.85f, 0.35f),
-                new Vector2(0f, 1f), new Vector2(22f, -12f), new Vector2(200f, 30f),
+            // --- ライバルの枠（本家: 名前とハートの下に体力バー） ---
+            var frame = CreatePanel(hud, "RivalFrame", FramePurple, top, new Vector2(0f, -(y0 + 40f)), new Vector2(780f, 120f));
+
+            var rivalName = CreateText(frame.transform, "RivalNameText", "ライバル", 28f, HudGold,
+                new Vector2(0f, 1f), new Vector2(28f, -12f), new Vector2(380f, 40f),
                 TextAlignmentOptions.MidlineLeft, FontStyles.Bold);
 
-            var (gaugeSlider, gaugeFill) = CreateBar(frame.transform, "BeatGaugeSlider",
-                new Vector2(1f, 1f), new Vector2(-24f, -16f), new Vector2(640f, 22f), new Color(1f, 1f, 1f, 0.25f));
+            var hearts = CreateText(frame.transform, "RivalHeartsText", "♥♥♥♥♥", 30f, HudPink,
+                new Vector2(1f, 1f), new Vector2(-28f, -10f), new Vector2(240f, 40f), TextAlignmentOptions.MidlineRight);
+
+            var (rivalBar, rivalFill) = CreateBar(frame.transform, "RivalHpBar",
+                new Vector2(0.5f, 0f), new Vector2(0f, 20f), new Vector2(724f, 34f), new Color(1f, 1f, 1f, 0.25f));
+
+            // --- キラメキビート（枠のすぐ下に細く） ---
+            CreateText(hud, "GaugeLabel", "キラメキビート", 22f, HudGold,
+                top, new Vector2(-300f, -(y0 + 168f)), new Vector2(180f, 30f),
+                TextAlignmentOptions.MidlineLeft, FontStyles.Bold);
+
+            var (gaugeSlider, gaugeFill) = CreateBar(hud, "BeatGaugeSlider",
+                top, new Vector2(90f, -(y0 + 174f)), new Vector2(600f, 18f), new Color(1f, 1f, 1f, 0.25f));
 
             var gaugeView = gaugeSlider.gameObject.AddComponent<BeatGaugeView>();
             SetField(gaugeView, "controller", gauge);
@@ -1077,44 +1128,52 @@ namespace Yakiniku.Run.EditorTools
             SetField(gaugeView, "normalColor", new Color(0.35f, 0.8f, 1f));
             SetField(gaugeView, "feverColor", new Color(1f, 0.45f, 0.85f));
 
-            var rivalName = CreateText(frame.transform, "RivalNameText", "ライバル", 24f, Color.white,
-                new Vector2(0f, 0f), new Vector2(22f, 14f), new Vector2(200f, 36f),
-                TextAlignmentOptions.MidlineLeft, FontStyles.Bold);
-
-            var (rivalBar, rivalFill) = CreateBar(frame.transform, "RivalHpBar",
-                new Vector2(0.5f, 0f), new Vector2(10f, 22f), new Vector2(440f, 20f), new Color(1f, 1f, 1f, 0.25f));
-
-            var hearts = CreateText(frame.transform, "RivalHeartsText", "♥♥♥♥♥", 26f, new Color(1f, 0.45f, 0.65f),
-                new Vector2(1f, 0f), new Vector2(-24f, 14f), new Vector2(170f, 36f), TextAlignmentOptions.MidlineRight);
-
-            // --- 左上のスコア類 ---
-            var combo = CreateText(hud, "ComboText", "0", 88f, Color.white,
-                topLeft, new Vector2(40f, -120f), new Vector2(360f, 96f), TextAlignmentOptions.TopLeft, FontStyles.Bold);
-            CreateText(hud, "ComboLabel", "COMBO", 24f, Color.white,
-                topLeft, new Vector2(46f, -212f), new Vector2(360f, 30f), TextAlignmentOptions.TopLeft, FontStyles.Bold);
-            var multiplier = CreateText(hud, "MultiplierText", "x1.00", 30f, new Color(1f, 0.85f, 0.35f),
-                topLeft, new Vector2(46f, -246f), new Vector2(360f, 36f), TextAlignmentOptions.TopLeft, FontStyles.Bold);
+            // --- 左のスコア類（本家: COMBO の下に、左端へ寄せた SCORE の枠とハート） ---
+            var combo = CreateText(hud, "ComboText", "0", 100f, Color.white,
+                topLeft, new Vector2(28f, -(y0 + 230f)), new Vector2(360f, 110f), TextAlignmentOptions.TopLeft, FontStyles.Bold);
+            CreateText(hud, "ComboLabel", "COMBO", 26f, Color.white,
+                topLeft, new Vector2(32f, -(y0 + 340f)), new Vector2(130f, 32f), TextAlignmentOptions.TopLeft, FontStyles.Bold);
+            var multiplier = CreateText(hud, "MultiplierText", "x1.00", 26f, HudGold,
+                topLeft, new Vector2(170f, -(y0 + 340f)), new Vector2(200f, 32f), TextAlignmentOptions.TopLeft, FontStyles.Bold);
 
             var scorePill = CreatePanel(hud, "ScorePill", new Color(1f, 1f, 1f, 0.88f),
-                topLeft, new Vector2(30f, -294f), new Vector2(340f, 74f));
-            CreateText(scorePill.transform, "ScoreLabel", "SCORE", 18f, new Color(0.85f, 0.35f, 0.6f),
-                topLeft, new Vector2(16f, -6f), new Vector2(200f, 24f), TextAlignmentOptions.TopLeft, FontStyles.Bold);
-            var scoreText = CreateText(scorePill.transform, "ScoreText", "0", 36f, Ink,
-                new Vector2(1f, 0f), new Vector2(-16f, 6f), new Vector2(300f, 44f), TextAlignmentOptions.BottomRight, FontStyles.Bold);
+                topLeft, new Vector2(0f, -(y0 + 390f)), new Vector2(340f, 96f));
+            CreateText(scorePill.transform, "ScoreLabel", "SCORE", 22f, new Color(0.85f, 0.35f, 0.6f),
+                topLeft, new Vector2(20f, -8f), new Vector2(200f, 28f), TextAlignmentOptions.TopLeft, FontStyles.Bold);
+            var scoreText = CreateText(scorePill.transform, "ScoreText", "0", 42f, Ink,
+                new Vector2(1f, 0f), new Vector2(-18f, 6f), new Vector2(300f, 52f), TextAlignmentOptions.BottomRight, FontStyles.Bold);
 
-            var life = CreateText(hud, "LifeText", "♥♥♥♥♥", 34f, new Color(1f, 0.35f, 0.55f),
-                topLeft, new Vector2(40f, -378f), new Vector2(300f, 40f), TextAlignmentOptions.TopLeft);
+            var life = CreateText(hud, "LifeText", "♥♥♥♥♥", 36f, new Color(1f, 0.35f, 0.55f),
+                topLeft, new Vector2(24f, -(y0 + 500f)), new Vector2(300f, 44f), TextAlignmentOptions.TopLeft);
             CreateText(hud, "LifeLabel", "LIFE", 18f, Color.white,
-                topLeft, new Vector2(42f, -418f), new Vector2(120f, 24f), TextAlignmentOptions.TopLeft, FontStyles.Bold);
+                topLeft, new Vector2(28f, -(y0 + 546f)), new Vector2(120f, 24f), TextAlignmentOptions.TopLeft, FontStyles.Bold);
 
             // --- バナー。文字の後ろに暗い帯を敷く（金色のレーンの上だと金色の文字が溶けるため） ---
             var ribbon = CreatePanel(hud, "Banner", new Color(0.08f, 0.04f, 0.2f, 0.7f),
-                new Vector2(0.5f, 0.5f), new Vector2(0f, 150f), new Vector2(2400f, 150f));
+                new Vector2(0.5f, 0.5f), new Vector2(0f, 230f), new Vector2(2400f, 150f));
             var bannerGroup = ribbon.gameObject.AddComponent<CanvasGroup>();
-            var banner = CreateText(ribbon.transform, "BannerText", "FEVER!", 96f, Color.white,
-                new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(1400f, 130f),
-                TextAlignmentOptions.Center, FontStyles.Bold | FontStyles.Italic);
+            var banner = ShrinkToFit(CreateText(ribbon.transform, "BannerText", "FEVER!", 96f, Color.white,
+                new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(1000f, 130f),
+                TextAlignmentOptions.Center, FontStyles.Bold | FontStyles.Italic), 48f);
             ribbon.gameObject.SetActive(false);
+
+            // --- JUMP ボタン（本家: 下端中央の丸いオレンジのボタン） ---
+            var jumpImage = CreatePanel(hud, "JumpButton", JumpOrange, new Vector2(0.5f, 0f),
+                new Vector2(0f, 24f), new Vector2(300f, 300f), Builtin("UI/Skin/Knob.psd"));
+            jumpImage.type = Image.Type.Simple;
+            jumpImage.raycastTarget = true;
+            CreateText(jumpImage.transform, "Label", "JUMP", 64f, Color.white,
+                new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(280f, 90f),
+                TextAlignmentOptions.Center, FontStyles.Bold);
+
+            // 押した見た目だけ Button に任せる。操作は押した瞬間に PressRunInput が積む
+            var jumpButton = jumpImage.gameObject.AddComponent<Button>();
+            jumpButton.targetGraphic = jumpImage;
+            var colors = jumpButton.colors;
+            colors.pressedColor = new Color(0.8f, 0.8f, 0.8f, 1f);
+            jumpButton.colors = colors;
+            var jumpInput = jumpImage.gameObject.AddComponent<PressRunInput>();
+            SetField(jumpInput, "action", (int)RunInputAction.Jump);
 
             var view = hud.gameObject.AddComponent<RunHudView>();
             SetField(view, "score", score);
@@ -1131,33 +1190,116 @@ namespace Yakiniku.Run.EditorTools
             SetField(view, "lifeText", life);
             SetField(view, "bannerText", banner);
             SetField(view, "bannerGroup", bannerGroup);
+
+            return jumpInput;
+        }
+
+        /// <summary>
+        /// 上部エリアの実況ログ欄。本家のコメント欄のような吹き出しが下から積み上がる。
+        /// 1行の雛形（非表示）を作っておき、<see cref="RunEventFeed"/> がそれを複製して流す。
+        /// 何を流すかは同じ GameObject の <see cref="RunEventFeedHooks"/> が決める。
+        /// </summary>
+        private static void BuildEventFeed(Transform hud, PlayerRunner player, RunRival rival,
+            BeatGaugeController gauge, RunScore score)
+        {
+            const float entryHeight = 116f;
+
+            // 上部エリアいっぱい（左右 20・上 20 の余白）。吹き出しは下端から積む
+            var area = CreateRect(hud, "EventFeed");
+            area.anchorMin = new Vector2(0f, 1f);
+            area.anchorMax = new Vector2(1f, 1f);
+            area.pivot = new Vector2(0.5f, 1f);
+            area.sizeDelta = new Vector2(-40f, TopAreaHeight - 40f);
+            area.anchoredPosition = new Vector2(0f, -20f);
+
+            // --- 1行の雛形 ---
+            var row = CreateRect(area, "EntryTemplate");
+            row.anchorMin = new Vector2(0f, 0f);
+            row.anchorMax = new Vector2(1f, 0f);
+            row.pivot = new Vector2(0.5f, 0f);
+            row.sizeDelta = new Vector2(0f, entryHeight);
+            row.anchoredPosition = Vector2.zero;
+
+            var background = row.gameObject.AddComponent<Image>();
+            background.sprite = Builtin("UI/Skin/UISprite.psd");
+            background.type = Image.Type.Sliced;
+            background.color = new Color(0.93f, 0.9f, 1f, 0.9f);
+            background.raycastTarget = false;
+            var group = row.gameObject.AddComponent<CanvasGroup>();
+            group.blocksRaycasts = false;
+            group.interactable = false;
+
+            var icon = CreatePanel(row, "Icon", Color.white, new Vector2(0f, 0.5f), new Vector2(16f, 0f), new Vector2(84f, 84f),
+                Builtin("UI/Skin/Knob.psd"));
+            icon.type = Image.Type.Simple;
+            var iconLabel = CreateText(icon.transform, "Initial", "実", 40f, Color.white,
+                new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(84f, 84f), TextAlignmentOptions.Center, FontStyles.Bold);
+
+            var nameText = CreateText(row, "Name", "実況", 22f, Hex("#7A64C8"),
+                new Vector2(0f, 1f), new Vector2(118f, -10f), new Vector2(820f, 30f),
+                TextAlignmentOptions.TopLeft, FontStyles.Bold);
+            var messageText = ShrinkToFit(CreateText(row, "Message", "メッセージ", 32f, Ink,
+                new Vector2(0f, 0f), new Vector2(118f, 12f), new Vector2(880f, 58f),
+                TextAlignmentOptions.BottomLeft), 20f);
+
+            var entry = row.gameObject.AddComponent<RunEventFeedEntry>();
+            SetField(entry, "icon", icon);
+            SetField(entry, "iconLabel", iconLabel);
+            SetField(entry, "nameText", nameText);
+            SetField(entry, "messageText", messageText);
+            SetField(entry, "group", group);
+
+            var feed = area.gameObject.AddComponent<RunEventFeed>();
+            SetField(feed, "template", entry);
+            SetField(feed, "maxEntries", 3);
+            SetField(feed, "entryHeight", entryHeight);
+            SetField(feed, "spacing", 12f);
+
+            var hooks = area.gameObject.AddComponent<RunEventFeedHooks>();
+            SetField(hooks, "feed", feed);
+            SetField(hooks, "player", player);
+            SetField(hooks, "rival", rival);
+            SetField(hooks, "gauge", gauge);
+            SetField(hooks, "score", score);
+
+            // 雛形は非表示にしておく（RunEventFeed が複製して使う）
+            row.gameObject.SetActive(false);
         }
 
         /// <summary>
         /// 開始演出（VS カットイン → Let's FIGHT!）。立ち絵は仮の色板なので、
         /// PlayerPortrait / RivalPortrait の Image にスプライトを入れれば差し替わる。
+        ///
+        /// 本家どおり、画面の中ほどを横切る帯にする。左半分が自分、右半分がライバル。
+        /// セリフは自分のが帯の左下（外）、ライバルのが帯の右下（内）。
+        /// 滑り込みは自分が左から、ライバルが右から。
         /// </summary>
         private static RunIntroSequence BuildIntro(Transform canvas, PlayerRunner player, RunRival rival, AudioSource bgm)
         {
             var root = Stretch(CreateRect(canvas, "Intro"));
             var center = new Vector2(0.5f, 0.5f);
 
+            const float bandY = 48f;      // 帯の中心（画面中央から少し上）
+            const float bandHeight = 420f;
+
             var versus = Stretch(CreateRect(root, "Versus"));
             var group = versus.gameObject.AddComponent<CanvasGroup>();
-            CreateFullscreen(versus, "Dim", new Color(0.1f, 0.05f, 0.2f, 0.45f));
+            CreateFullscreen(versus, "Dim", new Color(0.1f, 0.05f, 0.2f, 0.25f));
 
             var (playerCard, playerPortrait, playerName, playerLine) =
-                BuildVersusCard(versus, "PlayerCard", new Vector2(-470f, 10f), Hex("#5FC8FF"), Hex("#2D6FD1"));
+                BuildVersusCard(versus, "PlayerCard", new Vector2(-270f, bandY), bandHeight,
+                    Hex("#8FD8FF"), Hex("#2D6FD1"), bubbleOutside: true);
             var (rivalCard, rivalPortrait, rivalName, rivalLine) =
-                BuildVersusCard(versus, "RivalCard", new Vector2(470f, 10f), Hex("#FF8FC8"), Hex("#C93D8B"));
+                BuildVersusCard(versus, "RivalCard", new Vector2(270f, bandY), bandHeight,
+                    Hex("#FFC27A"), Hex("#E0703A"), bubbleOutside: false);
 
             var vs = CreateText(versus, "VS", "VS", 200f, new Color(1f, 0.82f, 0.25f),
-                center, new Vector2(0f, 40f), new Vector2(420f, 240f), TextAlignmentOptions.Center,
+                center, new Vector2(0f, bandY + 20f), new Vector2(420f, 240f), TextAlignmentOptions.Center,
                 FontStyles.Bold | FontStyles.Italic);
 
-            var fight = CreateText(root, "FightText", "Let's FIGHT!", 140f, Color.white,
-                center, new Vector2(0f, 60f), new Vector2(1600f, 200f), TextAlignmentOptions.Center,
-                FontStyles.Bold | FontStyles.Italic);
+            var fight = ShrinkToFit(CreateText(root, "FightText", "Let's FIGHT!", 140f, Color.white,
+                center, new Vector2(0f, -60f), new Vector2(1040f, 200f), TextAlignmentOptions.Center,
+                FontStyles.Bold | FontStyles.Italic), 60f);
 
             var intro = root.gameObject.AddComponent<RunIntroSequence>();
             SetField(intro, "player", player);
@@ -1177,25 +1319,32 @@ namespace Yakiniku.Run.EditorTools
             return intro;
         }
 
+        /// <summary>
+        /// VS の帯の片側。セリフの吹き出しはカードの子にしてあるので、カードと一緒に滑り込む。
+        /// <paramref name="bubbleOutside"/> が true なら帯の下（外）、false なら帯の下端の内側に出す。
+        /// </summary>
         private static (RectTransform card, Image portrait, TextMeshProUGUI name, TextMeshProUGUI line)
-            BuildVersusCard(Transform parent, string name, Vector2 position, Color light, Color dark)
+            BuildVersusCard(Transform parent, string name, Vector2 position, float height,
+                Color light, Color dark, bool bubbleOutside)
         {
-            var card = CreatePanel(parent, name, light, new Vector2(0.5f, 0.5f), position, new Vector2(820f, 520f));
+            var card = CreatePanel(parent, name, light, new Vector2(0.5f, 0.5f), position, new Vector2(540f, height));
 
-            // 立ち絵（仮）。スプライトを入れれば差し替わる
+            // 立ち絵（仮）。カードいっぱいに置く。スプライトを入れれば差し替わる
             var portrait = CreatePanel(card.transform, name.Replace("Card", "Portrait"), dark,
-                new Vector2(0.5f, 1f), new Vector2(0f, -26f), new Vector2(360f, 340f));
+                new Vector2(0.5f, 1f), new Vector2(0f, -14f), new Vector2(380f, height - 28f));
             CreateText(portrait.transform, "Placeholder", "立ち絵（仮）", 26f, new Color(1f, 1f, 1f, 0.7f),
                 new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(340f, 60f));
 
-            var nameText = CreateText(card.transform, "Name", "名前", 40f, Color.white,
-                new Vector2(0.5f, 0f), new Vector2(0f, 118f), new Vector2(760f, 56f),
-                TextAlignmentOptions.Center, FontStyles.Bold);
+            var nameText = ShrinkToFit(CreateText(card.transform, "Name", "名前", 34f, Color.white,
+                new Vector2(0.5f, 1f), new Vector2(0f, -16f), new Vector2(500f, 48f),
+                TextAlignmentOptions.Center, FontStyles.Bold), 22f);
 
+            var bubblePosition = bubbleOutside ? new Vector2(0f, -170f) : new Vector2(0f, 18f);
             var bubble = CreatePanel(card.transform, "Bubble", Color.white,
-                new Vector2(0.5f, 0f), new Vector2(0f, 22f), new Vector2(740f, 86f));
-            var lineText = CreateText(bubble.transform, "Line", "セリフ", 28f, Ink,
-                new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(700f, 70f));
+                new Vector2(0.5f, 0f), bubblePosition, new Vector2(500f, 140f));
+            var lineText = ShrinkToFit(CreateText(bubble.transform, "Line", "セリフ", 30f, Ink,
+                new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(460f, 120f)), 20f);
+            lineText.enableWordWrapping = true;
 
             return (card.rectTransform, portrait, nameText, lineText);
         }
@@ -1203,9 +1352,9 @@ namespace Yakiniku.Run.EditorTools
         private static void BuildFinish(Transform canvas, RunGoalWatcher goal, PlayerRunner player,
             RunScore score, RunRival rival, RunSpawner spawner)
         {
-            var finishText = CreateText(canvas, "FinishText", "FINISH", 170f, Color.white,
-                new Vector2(0.5f, 0.5f), new Vector2(0f, 60f), new Vector2(1600f, 220f),
-                TextAlignmentOptions.Center, FontStyles.Bold | FontStyles.Italic);
+            var finishText = ShrinkToFit(CreateText(canvas, "FinishText", "FINISH", 170f, Color.white,
+                new Vector2(0.5f, 0.5f), new Vector2(0f, -60f), new Vector2(1040f, 220f),
+                TextAlignmentOptions.Center, FontStyles.Bold | FontStyles.Italic), 80f);
 
             var finish = new GameObject("FinishSequence").AddComponent<RunFinishSequence>();
             SetField(finish, "goal", goal);
