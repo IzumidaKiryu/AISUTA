@@ -18,7 +18,7 @@ namespace Yakiniku.Run.Inputs
         private readonly Queue<RunInputAction> queue = new Queue<RunInputAction>();
 
         /// <summary>現在バッファに溜まっている操作の数。</summary>
-        public int BufferedCount => queue.Count;
+        public virtual int BufferedCount => queue.Count;
 
         /// <summary>派生クラスから操作を積む。上限を超えた場合は最古の操作を破棄する。</summary>
         protected void Enqueue(RunInputAction action)
@@ -34,8 +34,8 @@ namespace Yakiniku.Run.Inputs
         }
 
         /// <summary>溜まっている操作を全て破棄する（リトライ時など）。</summary>
-        public void ClearBuffer() => queue.Clear();
+        public virtual void ClearBuffer() => queue.Clear();
 
-        public bool TryDequeue(out RunInputAction action) => queue.TryDequeue(out action);
+        public virtual bool TryDequeue(out RunInputAction action) => queue.TryDequeue(out action);
     }
 }
